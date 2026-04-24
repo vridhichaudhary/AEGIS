@@ -4,10 +4,19 @@ from datetime import datetime
 
 from agents.base_agent import BaseAgent
 
-try:
-    from langchain_core.messages import HumanMessage
-except ImportError:  # pragma: no cover
-    HumanMessage = None
+from langchain_core.messages import HumanMessage
+from langchain_core.output_parsers import JsonOutputParser
+from pydantic import BaseModel, Field
+from typing import List
+
+class ParsingResult(BaseModel):
+    location_text: str = Field(description="The extracted location string, e.g. 'Sector 14'")
+    landmark: str = Field(description="Any specific landmark, e.g. 'Ambience Mall'")
+    incident_category: str = Field(description="One of: medical, fire, accident, natural_disaster, violence, other")
+    incident_subcategory: str = Field(description="More specific subcategory, e.g. 'cardiac_emergency', 'road_accident'")
+    victim_count: int = Field(description="Estimated number of victims")
+    severity_indicators: List[str] = Field(description="List of severe indicators like 'unconscious', 'trapped'")
+    urgency_level: str = Field(description="One of: immediate, urgent, routine")
 
 
 class ParsingAgent(BaseAgent):
@@ -172,25 +181,28 @@ class ParsingAgent(BaseAgent):
 
     def __init__(self):
         super().__init__(temperature=0)
+        self.parser = JsonOutputParser(pydantic_object=ParsingResult)
 
     def build_gemini_prompt(self, text: str, language_code: str) -> str:
+        format_instructions = self.parser.get_format_instructions()
         return f"""You are an expert emergency call analyst for India's emergency dispatch system.
 
-Extract location, incident type, victim count, severity indicators, and urgency from this call:
+Your job is to extract critical information from the following emergency call transcript.
+Pay close attention to Hinglish/Hindi phrases commonly used in India (e.g., 'aag lag gayi' -> fire, 'chot lagi' -> medical/accident, 'behosh' -> unconscious).
+
+Call Transcript:
 "{text}"
 
 Language: {language_code}
 
-Return ONLY JSON:
-{{
-  "location_text": "",
-  "landmark": "",
-  "incident_category": "medical|fire|accident|natural_disaster|violence|other",
-  "incident_subcategory": "",
-  "victim_count": 1,
-  "severity_indicators": [],
-  "urgency_level": "immediate|urgent|routine"
-}}
+Instructions:
+1. Extract the location and any specific landmarks. Handle Indian contexts like "Sector X" or "near Y mandir".
+2. Categorize the incident strictly into one of the allowed categories.
+3. Estimate the victim count. If plurals like 'log' or 'bache' are used without a number, assume at least 2.
+4. Extract severe indicators (e.g., 'trapped', 'unconscious', 'bleeding', 'heavy smoke').
+5. Assess the urgency level.
+
+{format_instructions}
 """
 
     def calculate_distress_score(self, text: str) -> float:
@@ -352,10 +364,7 @@ Return ONLY JSON:
         if self.llm_available and HumanMessage is not None:
             try:
                 response = await self.invoke_llm([HumanMessage(content=self.build_gemini_prompt(text, lang_code))])
-                content = response.content.strip()
-                if content.startswith("```json"):
-                    content = content.replace("```json", "").replace("```", "").strip()
-                parsed_data = json.loads(content)
+                parsed_data = self.parser.parse(response.content)
             except Exception as exc:
                 state["errors"].append(f"Parsing LLM fallback triggered: {exc}")
 

@@ -2,31 +2,29 @@ import React from 'react';
 
 const Metrics = ({ data }) => {
   return (
-    <div className="bg-gray-800 rounded-lg p-4 h-44">
-      <h2 className="text-lg font-semibold mb-2">System Metrics</h2>
-      <div className="grid grid-cols-2 gap-3 text-center pt-2">
-        <div>
-          <p className="text-2xl font-bold text-blue-400">{data.active_incidents || 0}</p>
-          <p className="text-xs text-gray-400">Active</p>
+    <div className="glass-card rounded-xl p-5 flex flex-col justify-center">
+      <h2 className="text-lg font-bold mb-4 flex items-center gap-2">
+        <span className="text-emerald-400">📊</span> System Metrics
+      </h2>
+      <div className="grid grid-cols-2 gap-4 text-center">
+        <div className="bg-gray-800/50 p-3 rounded-lg border border-gray-700/50 transition-all hover:border-blue-500/50">
+          <p className="text-3xl font-bold text-blue-400 animate-pulse-slow">{data.active_incidents || 0}</p>
+          <p className="text-xs text-gray-400 mt-1 uppercase tracking-wider">Active</p>
         </div>
-        <div>
-          <p className="text-2xl font-bold text-green-400">{data.avg_eta || '-'}</p>
-          <p className="text-xs text-gray-400">Avg ETA (m)</p>
+        <div className="bg-gray-800/50 p-3 rounded-lg border border-gray-700/50 transition-all hover:border-green-500/50">
+          <p className="text-3xl font-bold text-green-400">{data.avg_eta || '-'}</p>
+          <p className="text-xs text-gray-400 mt-1 uppercase tracking-wider">Avg ETA (m)</p>
         </div>
-        <div>
-          <p className="text-xl font-bold text-amber-400">{data.load || 'Low'}</p>
-          <p className="text-xs text-gray-400">Load</p>
+        <div className="bg-gray-800/50 p-3 rounded-lg border border-gray-700/50 transition-all hover:border-amber-500/50">
+          <p className={`text-xl font-bold mt-1 ${data.load === 'High' ? 'text-red-400' : data.load === 'Medium' ? 'text-amber-400' : 'text-blue-400'}`}>{data.load || 'Low'}</p>
+          <p className="text-xs text-gray-400 mt-1 uppercase tracking-wider">Load</p>
         </div>
-        <div>
-          <p className={`text-sm font-bold ${data.llm_ready ? 'text-emerald-400' : 'text-red-400'}`}>
-            {data.llm_ready ? 'Ready' : 'Fallback'}
+        <div className="bg-gray-800/50 p-3 rounded-lg border border-gray-700/50 transition-all hover:border-emerald-500/50">
+          <p className={`text-sm font-bold mt-2 ${data.llm_ready ? 'text-emerald-400' : 'text-yellow-400'}`}>
+            {data.llm_ready ? 'Online' : 'Fallback'}
           </p>
-          <p className="text-xs text-gray-400">LLM Status</p>
+          <p className="text-xs text-gray-400 mt-1 uppercase tracking-wider">LLM</p>
         </div>
-      </div>
-      <div className="mt-3 border-t border-gray-700 pt-3 text-xs text-gray-400">
-        <p>Backend: {data.backend_status || 'Unknown'}</p>
-        <p>Model: {data.model || 'Unavailable'}</p>
       </div>
     </div>
   );

@@ -21,8 +21,8 @@ export const connectWebSocket = (url = defaultWebSocketUrl()) => {
     console.log('Connected to WebSocket:', url);
   };
 
-  ws.onerror = (error) => {
-    console.error('WebSocket error:', error);
+  ws.onerror = () => {
+    // Suppress generic error logging since StrictMode unmounts intentionally cause this
   };
 
   ws.onclose = () => {

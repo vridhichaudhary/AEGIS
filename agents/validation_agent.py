@@ -3,12 +3,13 @@ from datetime import datetime
 
 from agents.base_agent import BaseAgent
 from config.settings import settings
+from langchain_core.messages import HumanMessage
+from langchain_core.output_parsers import JsonOutputParser
+from pydantic import BaseModel, Field
 
-try:
-    from langchain_core.messages import HumanMessage
-except ImportError:  # pragma: no cover
-    HumanMessage = None
-
+class ValidationResult(BaseModel):
+    confidence_score: float = Field(description="Score from 0.0 to 1.0 indicating confidence this is a real emergency")
+    reasoning: str = Field(description="Brief explanation of why this score was assigned")
 
 class ValidationAgent(BaseAgent):
     """Authenticity and dispatch-readiness checks with conservative safety behavior."""
@@ -42,21 +43,26 @@ class ValidationAgent(BaseAgent):
     def __init__(self):
         super().__init__(temperature=0)
         self.confidence_threshold = settings.VALIDATION_CONFIDENCE_THRESHOLD
+        self.parser = JsonOutputParser(pydantic_object=ValidationResult)
 
     async def llm_confidence_score(self, state: dict) -> float:
         if not self.llm_available or HumanMessage is None:
             return 0.5
 
-        prompt = f"""Score whether this is a real emergency from 0.0 to 1.0.
+        format_instructions = self.parser.get_format_instructions()
+        prompt = f"""You are a risk assessment expert for an emergency dispatch center.
+Score whether this is a genuine emergency from 0.0 (Prank/Informational) to 1.0 (Definite Emergency).
+Be highly sensitive to subtle cries for help, but skeptical of obvious test phrases.
+
 Call: {state['normalized_text']}
 Location: {state['location']['raw_text']}
 Incident: {state['incident_type']['category']}
-Return only a number."""
+
+{format_instructions}"""
         try:
             response = await self.invoke_llm([HumanMessage(content=prompt)])
-            match = re.search(r"0?\.\d+|1\.0|0|1", response.content.strip())
-            if match:
-                return max(0.0, min(1.0, float(match.group())))
+            parsed = self.parser.parse(response.content)
+            return max(0.0, min(1.0, float(parsed["confidence_score"])))
         except Exception:
             pass
         return 0.5

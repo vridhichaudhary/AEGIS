@@ -1,13 +1,22 @@
 import json
 from datetime import datetime
+from typing import List
 
 from agents.base_agent import BaseAgent
+from langchain_core.messages import HumanMessage
+from langchain_core.output_parsers import JsonOutputParser
+from pydantic import BaseModel, Field
 
-try:
-    from langchain_core.messages import HumanMessage
-except ImportError:  # pragma: no cover
-    HumanMessage = None
+class ResourceRequirement(BaseModel):
+    type: str = Field(description="Type of resource, e.g. ambulance, police, fire_truck")
+    quantity: int = Field(description="Number of resources needed")
+    specialized: bool = Field(description="Whether the resource needs to be specialized (e.g. trauma ambulance)")
 
+class TriageResult(BaseModel):
+    priority_level: str = Field(description="Priority level: P1 (critical), P2, P3, P4, P5 (minor)")
+    priority_justification: str = Field(description="Reasoning for the assigned priority")
+    required_resources: List[ResourceRequirement] = Field(description="List of resources required to handle the emergency")
+    estimated_severity: str = Field(description="One of: critical, serious, moderate, minor")
 
 class TriageAgent(BaseAgent):
     """High-recall triage for life-critical emergencies."""
@@ -16,6 +25,7 @@ class TriageAgent(BaseAgent):
 
     def __init__(self):
         super().__init__(temperature=0)
+        self.parser = JsonOutputParser(pydantic_object=TriageResult)
 
     def heuristic_triage(self, state: dict) -> dict:
         text = state["normalized_text"].lower()
@@ -131,18 +141,26 @@ class TriageAgent(BaseAgent):
         triage_data = None
 
         if self.llm_available and HumanMessage is not None:
-            prompt = f"""Assign emergency priority P1-P5 and resources.
+            format_instructions = self.parser.get_format_instructions()
+            prompt = f"""You are an expert emergency dispatch triage officer.
+Your task is to assign an emergency priority (P1-P5) and allocate resources based on standard operating procedures.
+
+Guidelines:
+- P1 (Critical): Life-threatening. E.g., Fire with entrapment, cardiac arrest, major trauma, active shooter.
+- P2 (Serious): Urgent but stable. E.g., Fire without entrapment, severe pain, non-critical injuries.
+- P3 (Moderate): Routine emergency. E.g., Minor accidents, small fires.
+- P4 (Minor): Non-urgent. E.g., Public nuisance, minor illness.
+- P5 (Non-Emergency): Pranks, informational calls.
+
 Call: {state['normalized_text']}
 Type: {state['incident_type']['category']}
 Victims: {state['victim_count']}
 Confidence: {state['confidence_score']}
-Return only JSON with priority_level, priority_justification, required_resources, estimated_severity."""
+
+{format_instructions}"""
             try:
                 response = await self.invoke_llm([HumanMessage(content=prompt)])
-                content = response.content.strip()
-                if content.startswith("```json"):
-                    content = content.replace("```json", "").replace("```", "").strip()
-                triage_data = json.loads(content)
+                triage_data = self.parser.parse(response.content)
             except Exception as exc:
                 state["errors"].append(f"Triage LLM fallback triggered: {exc}")
 
