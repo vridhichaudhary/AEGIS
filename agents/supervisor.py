@@ -1,20 +1,28 @@
-from langgraph.graph import StateGraph, END
-from typing import Literal
-from datetime import datetime
-import uuid
+from __future__ import annotations
 
-from agents.ingestion_agent import IngestionAgent
-from agents.parsing_agent import ParsingAgent
+import uuid
+from datetime import datetime
+from typing import Literal
+
 from agents.dedup_agent import DeduplicationAgent
-from agents.validation_agent import ValidationAgent
-from agents.triage_agent import TriageAgent
 from agents.dispatch_agent import DispatchAgent
 from agents.feedback_agent import FeedbackAgent
+from agents.ingestion_agent import IngestionAgent
+from agents.parsing_agent import ParsingAgent
+from agents.triage_agent import TriageAgent
+from agents.validation_agent import ValidationAgent
 from state.schema import AgentState
 
+try:
+    from langgraph.graph import END, StateGraph
+except ImportError:  # pragma: no cover - optional dependency
+    END = "__end__"
+    StateGraph = None
+
+
 class SupervisorAgent:
-    """LangGraph orchestrator for the 8-agent swarm"""
-    
+    """Orchestrates the agent pipeline with a LangGraph or sequential fallback."""
+
     def __init__(self):
         self.ingestion = IngestionAgent()
         self.parsing = ParsingAgent()
@@ -23,69 +31,40 @@ class SupervisorAgent:
         self.triage = TriageAgent()
         self.dispatch = DispatchAgent()
         self.feedback = FeedbackAgent()
-        
-        self.graph = self.build_graph()
-    
-    def build_graph(self) -> StateGraph:
-        """Construct the agent execution graph"""
+        self.graph = self.build_graph() if StateGraph is not None else None
+
+    def build_graph(self):
         workflow = StateGraph(AgentState)
-        
-        # Add nodes
         workflow.add_node("ingestion", self.ingestion.process)
         workflow.add_node("parsing", self.parsing.process)
         workflow.add_node("deduplication", self.dedup.process)
         workflow.add_node("validation", self.validation.process)
         workflow.add_node("triage", self.triage.process)
         workflow.add_node("dispatch", self.dispatch.process)
-        
-        # Set entry point
         workflow.set_entry_point("ingestion")
-        
-        # Define edges
         workflow.add_edge("ingestion", "parsing")
         workflow.add_edge("parsing", "deduplication")
-        
-        # Conditional: skip if duplicate
         workflow.add_conditional_edges(
             "deduplication",
             self.should_continue_after_dedup,
-            {
-                "continue": "validation",
-                "end": END
-            }
+            {"continue": "validation", "end": END},
         )
-        
-        # Conditional: callback if low confidence
         workflow.add_conditional_edges(
             "validation",
             self.should_continue_after_validation,
-            {
-                "continue": "triage",
-                "callback": END
-            }
+            {"continue": "triage", "callback": END},
         )
-        
         workflow.add_edge("triage", "dispatch")
         workflow.add_edge("dispatch", END)
-        
-        # Compile
         return workflow.compile()
-    
+
     def should_continue_after_dedup(self, state: AgentState) -> Literal["continue", "end"]:
-        """Route duplicate calls to merge"""
-        if state["is_duplicate"]:
-            return "end"
-        return "continue"
-    
+        return "end" if state["is_duplicate"] else "continue"
+
     def should_continue_after_validation(self, state: AgentState) -> Literal["continue", "callback"]:
-        """Trigger callback for low-confidence calls"""
-        if state["requires_callback"]:
-            return "callback"
-        return "continue"
-    
+        return "callback" if state["requires_callback"] else "continue"
+
     async def process_call(self, raw_transcript: str, caller_id: str = None) -> dict:
-        """Main entry point: process a single emergency call"""
-        
         initial_state = {
             "incident_id": str(uuid.uuid4()),
             "raw_transcript": raw_transcript,
@@ -120,12 +99,26 @@ class SupervisorAgent:
             "actual_severity": None,
             "response_time_seconds": None,
             "outcome": None,
-            "evaluation_score": None
+            "evaluation_score": None,
         }
-        
+
         try:
-            result = await self.graph.ainvoke(initial_state)
-            return result
-        except Exception as e:
-            initial_state["errors"].append(f"Graph execution failed: {str(e)}")
+            if self.graph is not None:
+                return await self.graph.ainvoke(initial_state)
+            return await self.run_sequential(initial_state)
+        except Exception as exc:
+            initial_state["errors"].append(f"Graph execution failed: {exc}")
             return initial_state
+
+    async def run_sequential(self, state: dict) -> dict:
+        state = await self.ingestion.process(state)
+        state = await self.parsing.process(state)
+        state = await self.dedup.process(state)
+        if state["is_duplicate"]:
+            return state
+        state = await self.validation.process(state)
+        if state["requires_callback"]:
+            return state
+        state = await self.triage.process(state)
+        state = await self.dispatch.process(state)
+        return state

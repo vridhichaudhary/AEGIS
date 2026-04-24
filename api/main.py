@@ -1,9 +1,10 @@
-from fastapi import FastAPI, HTTPException
+import asyncio
+from datetime import datetime
+from typing import Dict, List, Optional
+
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional
-from datetime import datetime
-import asyncio
 
 from agents.supervisor import SupervisorAgent
 from config.settings import settings
@@ -11,22 +12,48 @@ from simulation.scenarios import SimulationScenarios
 
 app = FastAPI(title="AEGIS API", version="1.0.0")
 
-# CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS.split(","),
+    allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Initialize supervisor
-supervisor = SupervisorAgent()
 
-# Request/Response Models
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: List[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+
+    async def broadcast(self, message: dict):
+        stale_connections = []
+        for connection in self.active_connections:
+            try:
+                await connection.send_json(message)
+            except Exception:
+                stale_connections.append(connection)
+
+        for connection in stale_connections:
+            self.disconnect(connection)
+
+
+manager = ConnectionManager()
+supervisor = SupervisorAgent()
+active_incidents: Dict[str, dict] = {}
+
+
 class EmergencyCallRequest(BaseModel):
     transcript: str
     caller_id: Optional[str] = None
+
 
 class EmergencyCallResponse(BaseModel):
     incident_id: str
@@ -37,25 +64,71 @@ class EmergencyCallResponse(BaseModel):
     dispatch_status: str
     agent_trail: List[dict]
 
-# Endpoints
+
+def serialize_incident(result: dict) -> dict:
+    return {
+        "incident_id": result["incident_id"],
+        "priority": result["priority"],
+        "status": result["dispatch_status"],
+        "timestamp": datetime.now().isoformat(),
+        "location": result.get("location"),
+        "incident_type": result.get("incident_type"),
+        "assigned_resources": result.get("assigned_resources", []),
+        "errors": result.get("errors", []),
+    }
+
+
+async def publish_result(result: dict):
+    incident_payload = serialize_incident(result)
+    active_incidents[result["incident_id"]] = incident_payload
+
+    await manager.broadcast({"type": "incident_update", "payload": incident_payload})
+
+    await manager.broadcast(
+        {
+            "type": "resource_update",
+            "payload": [
+                {
+                    "id": resource["resource_id"],
+                    "type": resource["resource_type"],
+                    "status": "dispatched",
+                    "location": incident_payload["location"]["raw_text"] if incident_payload["location"] else "",
+                }
+                for resource in result.get("assigned_resources", [])
+            ],
+        }
+    )
+
+    for event in result.get("agent_trail", []):
+        safe_event = {
+            **event,
+            "timestamp": event["timestamp"].isoformat() if hasattr(event.get("timestamp"), "isoformat") else event.get("timestamp"),
+        }
+        await manager.broadcast({"type": "agent_event", "payload": safe_event})
+
+
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
+
+@app.websocket("/ws/events")
+async def websocket_endpoint(websocket: WebSocket):
+    await manager.connect(websocket)
+    try:
+        while True:
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+
+
 @app.post("/api/v1/emergency/report", response_model=EmergencyCallResponse)
 async def report_emergency(request: EmergencyCallRequest):
-    """Main endpoint: process emergency call"""
     try:
-        result = await supervisor.process_call(
-            raw_transcript=request.transcript,
-            caller_id=request.caller_id
-        )
-        
-        # Calculate minimum ETA
-        eta = None
-        if result["assigned_resources"]:
-            eta = min([r["eta_minutes"] for r in result["assigned_resources"]])
-        
+        result = await supervisor.process_call(raw_transcript=request.transcript, caller_id=request.caller_id)
+        eta = min((resource["eta_minutes"] for resource in result["assigned_resources"]), default=None)
+        await publish_result(result)
+
         return EmergencyCallResponse(
             incident_id=result["incident_id"],
             status="processed",
@@ -63,21 +136,21 @@ async def report_emergency(request: EmergencyCallRequest):
             assigned_resources=result["assigned_resources"],
             eta_minutes=eta,
             dispatch_status=result["dispatch_status"],
-            agent_trail=result["agent_trail"]
+            agent_trail=result["agent_trail"],
         )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
 
 @app.get("/api/v1/incidents/active")
 async def get_active_incidents():
-    """Get all active incidents"""
-    return {"incidents": []}
+    return {"incidents": list(active_incidents.values())}
+
 
 @app.post("/api/v1/simulation/run")
 async def run_simulation(scenario: str = "normal", count: int = 5):
-    """Trigger simulation for demo"""
     scenarios = SimulationScenarios()
-    
+
     if scenario == "normal":
         incidents = scenarios.normal_load()[:count]
     elif scenario == "flood":
@@ -85,19 +158,23 @@ async def run_simulation(scenario: str = "normal", count: int = 5):
     elif scenario == "prank":
         incidents = scenarios.prank_storm()[:count]
     else:
-        raise HTTPException(400, "Invalid scenario")
-    
-    results = []
+        raise HTTPException(status_code=400, detail="Invalid scenario")
+
     for incident in incidents:
-        result = await supervisor.process_call(incident["transcript"])
-        results.append({
-            "incident_id": result["incident_id"],
-            "priority": result["priority"],
-            "dispatch_status": result["dispatch_status"]
-        })
-    
-    return {"processed": len(results), "results": results}
+        asyncio.create_task(process_simulated_incident(incident["transcript"]))
+
+    return {"queued": len(incidents)}
+
+
+async def process_simulated_incident(transcript: str):
+    try:
+        result = await supervisor.process_call(transcript)
+        await publish_result(result)
+    except Exception as exc:
+        print(f"Simulation error: {exc}")
+
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    uvicorn.run(app, host=settings.API_HOST, port=settings.API_PORT)

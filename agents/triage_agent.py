@@ -1,18 +1,89 @@
-from langchain_core.messages import HumanMessage
-from agents.base_agent import BaseAgent
-from datetime import datetime
 import json
+from datetime import datetime
+
+from agents.base_agent import BaseAgent
+
+try:
+    from langchain_core.messages import HumanMessage
+except ImportError:  # pragma: no cover - optional dependency
+    HumanMessage = None
+
 
 class TriageAgent(BaseAgent):
-    """P1-P5 priority assignment using FREE Gemini"""
-    
+    """Assigns priority with an LLM when possible and deterministic rules otherwise."""
+
+    PRIORITY_SCORES = {"P1": 5.0, "P2": 4.0, "P3": 3.0, "P4": 2.0, "P5": 1.0}
+
     def __init__(self):
         super().__init__(temperature=0)
-    
+
+    def heuristic_triage(self, state: dict) -> dict:
+        text = state["normalized_text"].lower()
+        incident_type = state["incident_type"]["category"]
+        clues = set(state.get("severity_clues", []))
+        victim_count = state.get("victim_count", 1)
+
+        if any(term in text for term in ["testing", "is this working", "hello?"]) and incident_type == "other":
+            return {
+                "priority_level": "P5",
+                "priority_justification": "Likely non-emergency or prank call.",
+                "required_resources": [],
+                "estimated_severity": "minor",
+            }
+
+        if incident_type == "fire" and any(term in text for term in ["trapped", "faase", "fas", "third floor"]):
+            return {
+                "priority_level": "P1",
+                "priority_justification": "Fire with likely entrapment requires immediate response.",
+                "required_resources": [
+                    {"type": "fire_truck_rescue", "quantity": 1, "specialized": True},
+                    {"type": "ambulance", "quantity": 1, "specialized": False},
+                ],
+                "estimated_severity": "critical",
+            }
+
+        if incident_type == "medical" and any(
+            term in text for term in ["heart attack", "unconscious", "not breathing", "cardiac", "behosh"]
+        ):
+            return {
+                "priority_level": "P1",
+                "priority_justification": "Critical medical symptoms demand immediate dispatch.",
+                "required_resources": [{"type": "ambulance_cardiac", "quantity": 1, "specialized": True}],
+                "estimated_severity": "critical",
+            }
+
+        if incident_type == "accident" and (
+            "bleeding" in text or "khoon" in text or victim_count >= 2 or "unconscious" in clues
+        ):
+            return {
+                "priority_level": "P2",
+                "priority_justification": "Accident with injuries requires urgent intervention.",
+                "required_resources": [{"type": "ambulance_trauma", "quantity": 1, "specialized": True}],
+                "estimated_severity": "serious",
+            }
+
+        if incident_type == "violence":
+            return {
+                "priority_level": "P2",
+                "priority_justification": "Potential violence requires police response.",
+                "required_resources": [{"type": "police", "quantity": 1, "specialized": False}],
+                "estimated_severity": "serious",
+            }
+
+        resource_type = "fire_truck" if incident_type == "fire" else "ambulance" if incident_type == "medical" else None
+        resources = [{"type": resource_type, "quantity": 1, "specialized": False}] if resource_type else []
+        return {
+            "priority_level": "P3" if resources else "P4",
+            "priority_justification": "Moderate severity based on available transcript details.",
+            "required_resources": resources,
+            "estimated_severity": "moderate" if resources else "minor",
+        }
+
     async def process(self, state: dict) -> dict:
-        """Execute triage using FREE Gemini"""
-        
-        prompt = f"""You are the Chief Triage Officer for India's National Emergency Response.
+        triage_data = None
+
+        if self.llm_available and HumanMessage is not None:
+            prompt = f"""You are the Chief Triage Officer for India's National Emergency Response.
 
 TASK: Assign priority P1-P5 and determine required resources.
 
@@ -24,45 +95,6 @@ Victims: {state['victim_count']}
 Distress: {state['distress_score']:.2f}
 Confidence: {state['confidence_score']:.2f}
 
-PRIORITY LEVELS (NDRF Protocol):
-
-P1 - IMMEDIATE (Red):
-- Cardiac arrest, severe bleeding, unconscious
-- Fire with entrapment
-- Major trauma, severe accidents
-- Childbirth complications
-→ Dispatch: <60 seconds
-
-P2 - URGENT (Orange):
-- Moderate bleeding, fractures
-- Burns (non-critical)
-- Breathing difficulty (stable)
-→ Dispatch: <5 minutes
-
-P3 - NON-URGENT (Yellow):
-- Minor injuries, sprains
-- Stable illness
-→ Dispatch: <15 minutes
-
-P4 - ROUTINE (Green):
-- Very minor issues
-- Property damage only
-→ Dispatch: when available
-
-P5 - INFO ONLY (White):
-- Non-emergency calls
-- Information requests
-→ No dispatch
-
-RESOURCES:
-- ambulance (basic medical transport)
-- ambulance_cardiac (heart emergencies)
-- ambulance_trauma (severe injuries)
-- fire_truck (fire response)
-- fire_truck_rescue (entrapment/collapse)
-- police (violence/security)
-- rescue_team (disasters)
-
 Return ONLY valid JSON:
 {{
   "priority_level": "P1|P2|P3|P4|P5",
@@ -70,53 +102,40 @@ Return ONLY valid JSON:
   "required_resources": [
     {{"type": "ambulance", "quantity": 1, "specialized": false}}
   ],
-  "estimated_severity": "critical|serious|moderate|minor",
-  "immediate_actions": ["action1", "action2"]
+  "estimated_severity": "critical|serious|moderate|minor"
 }}
 
 JSON OUTPUT:"""
 
-        try:
-            response = await self.llm.ainvoke([HumanMessage(content=prompt)])
-            content = response.content.strip()
-            
-            # Clean markdown
-            if content.startswith("```json"):
-                content = content.replace("```json", "").replace("```", "").strip()
-            
-            triage_data = json.loads(content)
-            
-            # Convert priority to numeric score
-            priority_scores = {"P1": 5.0, "P2": 4.0, "P3": 3.0, "P4": 2.0, "P5": 1.0}
-            priority_score = priority_scores.get(triage_data["priority_level"], 3.0)
-            
-            # Apply distress multiplier
-            priority_score += state["distress_score"] * 0.5
-            
-            # Log
-            state["agent_trail"].append({
+            try:
+                response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+                content = response.content.strip()
+                if content.startswith("```json"):
+                    content = content.replace("```json", "").replace("```", "").strip()
+                triage_data = json.loads(content)
+            except Exception as exc:
+                state["errors"].append(f"Triage LLM fallback triggered: {exc}")
+
+        if triage_data is None:
+            triage_data = self.heuristic_triage(state)
+
+        priority_score = self.PRIORITY_SCORES.get(triage_data["priority_level"], 3.0)
+        priority_score += state["distress_score"] * 0.5
+
+        state["agent_trail"].append(
+            {
                 "agent": "triage",
                 "timestamp": datetime.now(),
                 "decision": f"Assigned {triage_data['priority_level']}",
-                "reasoning": triage_data["priority_justification"]
-            })
-            
-            return {
-                **state,
-                "priority": triage_data["priority_level"],
-                "priority_score": priority_score,
-                "resource_requirements": triage_data["required_resources"],
-                "estimated_severity": triage_data["estimated_severity"],
-                "triage_reasoning": triage_data["priority_justification"]
+                "reasoning": triage_data["priority_justification"],
             }
-            
-        except Exception as e:
-            state["errors"].append(f"Triage failed: {str(e)}")
-            return {
-                **state,
-                "priority": "P2",
-                "priority_score": 4.0,
-                "resource_requirements": [{"type": "ambulance", "quantity": 1, "specialized": False}],
-                "estimated_severity": "Unknown",
-                "triage_reasoning": f"Auto-triage failed: {str(e)}"
-            }
+        )
+
+        return {
+            **state,
+            "priority": triage_data["priority_level"],
+            "priority_score": priority_score,
+            "resource_requirements": triage_data["required_resources"],
+            "estimated_severity": triage_data["estimated_severity"],
+            "triage_reasoning": triage_data["priority_justification"],
+        }

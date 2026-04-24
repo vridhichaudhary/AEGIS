@@ -5,7 +5,7 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
     envVars:
-      - key: ANTHROPIC_API_KEY
+      - key: GOOGLE_API_KEY
         sync: false
       - key: REDIS_HOST
         fromService:
@@ -21,4 +21,4 @@ services:
     name: aegis-portal
     env: static
     buildCommand: cd portal && npm install && npm run build
-    staticPublishPath: ./portal/build
+    staticPublishPath: ./portal/dist
