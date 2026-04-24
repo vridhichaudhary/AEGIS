@@ -2,6 +2,7 @@ services:
   - type: web
     name: aegis-api
     env: python
+    plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
     envVars:
@@ -12,15 +13,6 @@ services:
           name: aegis-portal
           type: web
           envVarKey: RENDER_EXTERNAL_URL
-      - key: REDIS_HOST
-        fromService:
-          name: aegis-redis
-          type: redis
-          property: host
-
-  - type: redis
-    name: aegis-redis
-    ipAllowList: []
 
   - type: web
     name: aegis-portal
