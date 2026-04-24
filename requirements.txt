@@ -1,7 +1,9 @@
 # Core Agent Framework
 langgraph==0.2.28
 langchain==0.3.0
-langchain-google-genai==2.0.0  
+langchain-google-genai==2.0.0
+langchain-groq==0.2.1
+langchain-xai==0.1.0
 langsmith
 
 # API & Web

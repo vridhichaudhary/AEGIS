@@ -18,6 +18,9 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("GOOGLE_API_KEY", "GEMINI_API_KEY"),
     )
+    GROQ_API_KEY: Optional[str] = None
+    XAI_API_KEY: Optional[str] = None
+
     LLM_PROVIDER: str = "google"
     LLM_MODEL: str = "gemini-1.5-flash"
 
@@ -49,6 +52,8 @@ class Settings(BaseSettings):
 
     @field_validator(
         "GOOGLE_API_KEY",
+        "GROQ_API_KEY",
+        "XAI_API_KEY",
         "LLM_PROVIDER",
         "LLM_MODEL",
         "LANGCHAIN_API_KEY",

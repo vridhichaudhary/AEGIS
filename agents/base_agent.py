@@ -11,9 +11,19 @@ try:
 except ImportError:  # pragma: no cover - exercised in dependency-light environments
     ChatGoogleGenerativeAI = None
 
+try:
+    from langchain_groq import ChatGroq
+except ImportError:
+    ChatGroq = None
+
+try:
+    from langchain_xai import ChatXAI
+except ImportError:
+    ChatXAI = None
+
 
 class BaseAgent:
-    """Base class that gracefully falls back when Gemini is unavailable or slow."""
+    """Base class that gracefully falls back when LLM is unavailable or slow."""
 
     def __init__(self, temperature: float = 0):
         self.llm = self.initialize_llm(temperature)
@@ -27,25 +37,47 @@ class BaseAgent:
         return {
             "provider": settings.LLM_PROVIDER,
             "model": settings.LLM_MODEL,
-            "has_api_key": bool(settings.GOOGLE_API_KEY),
+            "has_api_key": bool(settings.GOOGLE_API_KEY or settings.GROQ_API_KEY or settings.XAI_API_KEY),
             "google_genai_dependency": ChatGoogleGenerativeAI is not None,
+            "groq_dependency": ChatGroq is not None,
+            "xai_dependency": ChatXAI is not None,
             "llm_initialized": self.llm is not None,
             "timeout_seconds": settings.LLM_TIMEOUT_SECONDS,
         }
 
-    def initialize_llm(self, temperature: float) -> Optional["ChatGoogleGenerativeAI"]:
+    def initialize_llm(self, temperature: float):
         if os.environ.get("AEGIS_DISABLE_LLM", "").lower() in {"1", "true", "yes"}:
             return None
-        if ChatGoogleGenerativeAI is None or not settings.GOOGLE_API_KEY:
-            return None
 
-        return ChatGoogleGenerativeAI(
-            model=settings.LLM_MODEL,
-            google_api_key=settings.GOOGLE_API_KEY,
-            temperature=temperature,
-            max_output_tokens=2048,
-            convert_system_message_to_human=True,
-        )
+        # Try Groq first
+        if settings.GROQ_API_KEY and ChatGroq is not None:
+            return ChatGroq(
+                model="llama-3.3-70b-versatile",
+                api_key=settings.GROQ_API_KEY,
+                temperature=temperature,
+                max_tokens=2048,
+            )
+            
+        # Try xAI (Grok) second
+        if settings.XAI_API_KEY and ChatXAI is not None:
+            return ChatXAI(
+                model="grok-beta",
+                xai_api_key=settings.XAI_API_KEY,
+                temperature=temperature,
+                max_tokens=2048,
+            )
+
+        # Fallback to Gemini
+        if settings.GOOGLE_API_KEY and ChatGoogleGenerativeAI is not None:
+            return ChatGoogleGenerativeAI(
+                model=settings.LLM_MODEL,
+                google_api_key=settings.GOOGLE_API_KEY,
+                temperature=temperature,
+                max_output_tokens=2048,
+                convert_system_message_to_human=True,
+            )
+
+        return None
 
     async def invoke_llm(self, messages):
         if not self.llm:
