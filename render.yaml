@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: aegis-api
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn api.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: REDIS_HOST
+        fromService:
+          name: aegis-redis
+          type: redis
+          property: host
+
+  - type: redis
+    name: aegis-redis
+    ipAllowList: []
+
+  - type: web
+    name: aegis-portal
+    env: static
+    buildCommand: cd portal && npm install && npm run build
+    staticPublishPath: ./portal/build

@@ -1,4 +1,4 @@
-#!/Users/pranshu./aegis/venv/bin/python3.13
+#!/Users/mansiagarwal/AEGIS/venv/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys
