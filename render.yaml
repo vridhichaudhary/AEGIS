@@ -7,6 +7,11 @@ services:
     envVars:
       - key: GOOGLE_API_KEY
         sync: false
+      - key: CORS_ORIGINS
+        fromService:
+          name: aegis-portal
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
       - key: REDIS_HOST
         fromService:
           name: aegis-redis
@@ -22,3 +27,9 @@ services:
     env: static
     buildCommand: cd portal && npm install && npm run build
     staticPublishPath: ./portal/dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        fromService:
+          name: aegis-api
+          type: web
+          envVarKey: RENDER_EXTERNAL_URL
