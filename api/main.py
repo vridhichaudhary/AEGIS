@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from agents.supervisor import SupervisorAgent
+from agents.base_agent import BaseAgent
 from config.settings import settings
 from simulation.scenarios import SimulationScenarios
 
@@ -109,7 +110,14 @@ async def publish_result(result: dict):
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    llm_probe = BaseAgent()
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now().isoformat(),
+        "llm": llm_probe.llm_diagnostics,
+        "redis_host": settings.REDIS_HOST,
+        "environment": settings.ENVIRONMENT,
+    }
 
 
 @app.websocket("/ws/events")

@@ -351,7 +351,7 @@ Return ONLY JSON:
 
         if self.llm_available and HumanMessage is not None:
             try:
-                response = await self.llm.ainvoke([HumanMessage(content=self.build_gemini_prompt(text, lang_code))])
+                response = await self.invoke_llm([HumanMessage(content=self.build_gemini_prompt(text, lang_code))])
                 content = response.content.strip()
                 if content.startswith("```json"):
                     content = content.replace("```json", "").replace("```", "").strip()

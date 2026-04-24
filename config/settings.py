@@ -1,10 +1,23 @@
 from typing import Optional
 
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _clean_env_value(value: Optional[str]) -> Optional[str]:
+    if value is None:
+        return value
+    cleaned = value.strip().strip("\"'").strip()
+    if " #" in cleaned:
+        cleaned = cleaned.split(" #", 1)[0].strip()
+    return cleaned or None
+
+
 class Settings(BaseSettings):
-    GOOGLE_API_KEY: Optional[str] = None
+    GOOGLE_API_KEY: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+    )
     LLM_PROVIDER: str = "google"
     LLM_MODEL: str = "gemini-1.5-flash"
 
@@ -23,6 +36,7 @@ class Settings(BaseSettings):
 
     USE_MOCK_ROUTING: bool = True
     ENABLE_SEMANTIC_EMBEDDINGS: bool = False
+    LLM_TIMEOUT_SECONDS: float = 8.0
 
     VALIDATION_CONFIDENCE_THRESHOLD: float = 0.4
     DEDUP_SIMILARITY_THRESHOLD: float = 0.85
@@ -32,6 +46,25 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    @field_validator(
+        "GOOGLE_API_KEY",
+        "LLM_PROVIDER",
+        "LLM_MODEL",
+        "LANGCHAIN_API_KEY",
+        "LANGCHAIN_PROJECT",
+        "REDIS_HOST",
+        "CORS_ORIGINS",
+        "PORTAL_WS_URL",
+        "ENVIRONMENT",
+        "LOG_LEVEL",
+        mode="before",
+    )
+    @classmethod
+    def strip_comments_and_whitespace(cls, value):
+        if isinstance(value, str):
+            return _clean_env_value(value)
+        return value
 
 
 settings = Settings()

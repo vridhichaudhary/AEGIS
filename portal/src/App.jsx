@@ -14,9 +14,34 @@ function App() {
     active_incidents: 0,
     avg_eta: '-',
     load: 'Low',
+    llm_ready: false,
+    backend_status: 'Unknown',
+    model: 'Unavailable',
   });
 
   useEffect(() => {
+    const apiBase = import.meta.env.VITE_API_BASE_URL || '';
+
+    const loadHealth = async () => {
+      try {
+        const response = await fetch(`${apiBase}/health`);
+        const health = await response.json();
+        setMetrics((prev) => ({
+          ...prev,
+          backend_status: health.status || 'Unknown',
+          llm_ready: Boolean(health.llm?.llm_initialized),
+          model: health.llm?.model || 'Unavailable',
+        }));
+      } catch (error) {
+        setMetrics((prev) => ({
+          ...prev,
+          backend_status: 'Unavailable',
+          llm_ready: false,
+        }));
+      }
+    };
+
+    loadHealth();
     const ws = connectWebSocket();
 
     ws.onmessage = (event) => {
@@ -31,13 +56,14 @@ function App() {
             .map((resource) => resource.eta_minutes)
             .filter((value) => typeof value === 'number');
 
-          setMetrics({
+          setMetrics((prevMetrics) => ({
+            ...prevMetrics,
             active_incidents: activeCount,
             avg_eta: etaValues.length
               ? (etaValues.reduce((sum, value) => sum + value, 0) / etaValues.length).toFixed(1)
               : '-',
             load: activeCount > 10 ? 'High' : activeCount > 4 ? 'Medium' : 'Low',
-          });
+          }));
 
           return next;
         });

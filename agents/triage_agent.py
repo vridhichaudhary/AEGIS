@@ -138,7 +138,7 @@ Victims: {state['victim_count']}
 Confidence: {state['confidence_score']}
 Return only JSON with priority_level, priority_justification, required_resources, estimated_severity."""
             try:
-                response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+                response = await self.invoke_llm([HumanMessage(content=prompt)])
                 content = response.content.strip()
                 if content.startswith("```json"):
                     content = content.replace("```json", "").replace("```", "").strip()

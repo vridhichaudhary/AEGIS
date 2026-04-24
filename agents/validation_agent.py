@@ -53,7 +53,7 @@ Location: {state['location']['raw_text']}
 Incident: {state['incident_type']['category']}
 Return only a number."""
         try:
-            response = await self.llm.ainvoke([HumanMessage(content=prompt)])
+            response = await self.invoke_llm([HumanMessage(content=prompt)])
             match = re.search(r"0?\.\d+|1\.0|0|1", response.content.strip())
             if match:
                 return max(0.0, min(1.0, float(match.group())))
