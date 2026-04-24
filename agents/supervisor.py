@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Literal
-
 from agents.dedup_agent import DeduplicationAgent
 from agents.dispatch_agent import DispatchAgent
 from agents.feedback_agent import FeedbackAgent
@@ -15,13 +13,13 @@ from state.schema import AgentState
 
 try:
     from langgraph.graph import END, StateGraph
-except ImportError:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover
     END = "__end__"
     StateGraph = None
 
 
 class SupervisorAgent:
-    """Orchestrates the agent pipeline with a LangGraph or sequential fallback."""
+    """Supervises the full emergency flow with safety-first continuation."""
 
     def __init__(self):
         self.ingestion = IngestionAgent()
@@ -41,28 +39,16 @@ class SupervisorAgent:
         workflow.add_node("validation", self.validation.process)
         workflow.add_node("triage", self.triage.process)
         workflow.add_node("dispatch", self.dispatch.process)
+        workflow.add_node("feedback", self.feedback.process)
         workflow.set_entry_point("ingestion")
         workflow.add_edge("ingestion", "parsing")
         workflow.add_edge("parsing", "deduplication")
-        workflow.add_conditional_edges(
-            "deduplication",
-            self.should_continue_after_dedup,
-            {"continue": "validation", "end": END},
-        )
-        workflow.add_conditional_edges(
-            "validation",
-            self.should_continue_after_validation,
-            {"continue": "triage", "callback": END},
-        )
+        workflow.add_edge("deduplication", "validation")
+        workflow.add_edge("validation", "triage")
         workflow.add_edge("triage", "dispatch")
-        workflow.add_edge("dispatch", END)
+        workflow.add_edge("dispatch", "feedback")
+        workflow.add_edge("feedback", END)
         return workflow.compile()
-
-    def should_continue_after_dedup(self, state: AgentState) -> Literal["continue", "end"]:
-        return "end" if state["is_duplicate"] else "continue"
-
-    def should_continue_after_validation(self, state: AgentState) -> Literal["continue", "callback"]:
-        return "callback" if state["requires_callback"] else "continue"
 
     async def process_call(self, raw_transcript: str, caller_id: str = None) -> dict:
         initial_state = {
@@ -114,11 +100,8 @@ class SupervisorAgent:
         state = await self.ingestion.process(state)
         state = await self.parsing.process(state)
         state = await self.dedup.process(state)
-        if state["is_duplicate"]:
-            return state
         state = await self.validation.process(state)
-        if state["requires_callback"]:
-            return state
         state = await self.triage.process(state)
         state = await self.dispatch.process(state)
+        state = await self.feedback.process(state)
         return state

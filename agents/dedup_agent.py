@@ -60,6 +60,27 @@ class DeduplicationAgent:
         key = f"{location_text.lower().strip()}:{incident_type}"
         return hashlib.md5(key.encode()).hexdigest()[:12]
 
+    def canonicalize_text(self, text: str) -> str:
+        lowered = text.lower()
+        replacements = {
+            "aag": "fire",
+            "behosh": "unconscious",
+            "khoon": "bleeding",
+            "phas": "trapped",
+            "phase": "trapped",
+            "faase": "trapped",
+            "phat gaya": "blast",
+            "cylinder blast": "blast",
+            "danga": "riot",
+            "chaku": "knife",
+            "gaadi": "vehicle",
+            "gadiyan": "vehicles",
+        }
+        for source, target in replacements.items():
+            lowered = lowered.replace(source, target)
+        lowered = "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in lowered)
+        return " ".join(lowered.split())
+
     def compute_semantic_fingerprint(self, text: str) -> Optional[List[float]]:
         if self.embedding_model is None:
             return None
@@ -77,7 +98,13 @@ class DeduplicationAgent:
         return float(np.dot(a, b) / denominator)
 
     def fuzzy_text_similarity(self, text1: str, text2: str) -> float:
-        return SequenceMatcher(None, text1.lower(), text2.lower()).ratio()
+        canonical_1 = self.canonicalize_text(text1)
+        canonical_2 = self.canonicalize_text(text2)
+        seq_score = SequenceMatcher(None, canonical_1, canonical_2).ratio()
+        tokens_1 = set(canonical_1.split())
+        tokens_2 = set(canonical_2.split())
+        jaccard = len(tokens_1 & tokens_2) / max(1, len(tokens_1 | tokens_2))
+        return max(seq_score, jaccard)
 
     def list_keys(self, search_key: str) -> list[str]:
         if self.redis_client is not None:
@@ -125,6 +152,14 @@ class DeduplicationAgent:
                     similarity = self.fuzzy_text_similarity(
                         state["normalized_text"], stored_incident.get("normalized_text", "")
                     )
+
+                if stored_incident.get("location") == state["location"]["raw_text"]:
+                    similarity += 0.1
+                if "blast" in self.canonicalize_text(state["normalized_text"]) and "blast" in self.canonicalize_text(
+                    stored_incident.get("normalized_text", "")
+                ):
+                    similarity += 0.15
+                similarity = min(similarity, 1.0)
 
                 if similarity >= self.similarity_threshold:
                     return stored_incident["incident_id"]

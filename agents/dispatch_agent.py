@@ -9,35 +9,42 @@ from config.settings import settings
 
 try:
     import redis
-except ImportError:  # pragma: no cover - optional dependency
+except ImportError:  # pragma: no cover
     redis = None
 
 
 class DispatchAgent:
-    """Assigns resources using Redis when available and an in-memory pool otherwise."""
+    """Dispatches safely, with explicit hold states when location is missing."""
 
     _fallback_resources = {
         "ambulance": [
             {"resource_id": "AMB-101", "status": "available", "location": "Central Depot"},
             {"resource_id": "AMB-102", "status": "available", "location": "North Depot"},
+            {"resource_id": "AMB-103", "status": "available", "location": "South Depot"},
         ],
         "ambulance_cardiac": [
             {"resource_id": "CARD-201", "status": "available", "location": "Cardiac Center"},
+            {"resource_id": "CARD-202", "status": "available", "location": "Metro Cardiac Unit"},
         ],
         "ambulance_trauma": [
             {"resource_id": "TRM-301", "status": "available", "location": "Trauma Center"},
+            {"resource_id": "TRM-302", "status": "available", "location": "West Trauma Base"},
         ],
         "fire_truck": [
             {"resource_id": "FIR-401", "status": "available", "location": "Fire Station 1"},
+            {"resource_id": "FIR-402", "status": "available", "location": "Fire Station 2"},
         ],
         "fire_truck_rescue": [
             {"resource_id": "FIR-451", "status": "available", "location": "Rescue Station"},
+            {"resource_id": "FIR-452", "status": "available", "location": "Rescue Station 2"},
         ],
         "police": [
             {"resource_id": "POL-501", "status": "available", "location": "Police HQ"},
+            {"resource_id": "POL-502", "status": "available", "location": "North Police HQ"},
         ],
         "rescue_team": [
             {"resource_id": "RSC-601", "status": "available", "location": "Disaster Response Base"},
+            {"resource_id": "RSC-602", "status": "available", "location": "River Rescue Base"},
         ],
     }
 
@@ -61,9 +68,8 @@ class DispatchAgent:
     async def query_available_resources(self, resource_type: str) -> List[Dict]:
         if self.redis_client is not None:
             try:
-                search_key = f"resource:{resource_type}:*"
                 available = []
-                for key in self.redis_client.keys(search_key):
+                for key in self.redis_client.keys(f"resource:{resource_type}:*"):
                     data = self.redis_client.get(key)
                     if not data:
                         continue
@@ -74,7 +80,6 @@ class DispatchAgent:
                     return available
             except Exception:
                 pass
-
         return [resource.copy() for resource in self._fallback_resources.get(resource_type, []) if resource["status"] == "available"]
 
     def calculate_mock_eta(self, resource: Dict, destination: Dict) -> float:
@@ -83,8 +88,7 @@ class DispatchAgent:
     async def assign_resource(self, resource_id: str, incident_id: str):
         if self.redis_client is not None:
             try:
-                key = f"resource:*:{resource_id}"
-                keys = self.redis_client.keys(key)
+                keys = self.redis_client.keys(f"resource:*:{resource_id}")
                 if keys:
                     data = self.redis_client.get(keys[0])
                     resource = json.loads(data)
@@ -109,14 +113,60 @@ class DispatchAgent:
         incident_location = state["location"]
         incident_id = state["incident_id"]
         assigned_resources = []
+        has_location = bool(incident_location and incident_location.get("raw_text"))
+
+        if state.get("is_duplicate"):
+            state["agent_trail"].append(
+                {
+                    "agent": "dispatch",
+                    "timestamp": datetime.now(),
+                    "decision": "Merged duplicate report",
+                    "reasoning": f"Matched existing incident {state.get('duplicate_of')}; suppressing redundant dispatch.",
+                }
+            )
+            return {
+                **state,
+                "assigned_resources": [],
+                "dispatch_status": "merged_duplicate",
+                "dispatch_timestamp": None,
+            }
+
+        if state["priority"] == "P5":
+            state["agent_trail"].append(
+                {
+                    "agent": "dispatch",
+                    "timestamp": datetime.now(),
+                    "decision": "No dispatch",
+                    "reasoning": "Incident classified as non-emergency after validation and triage.",
+                }
+            )
+            return {**state, "assigned_resources": [], "dispatch_status": "not_required", "dispatch_timestamp": None}
+
+        if not has_location:
+            decision = "Dispatch held pending callback"
+            reasoning = "Life-critical intent detected but no dispatchable location was extracted."
+            if state["priority"] in {"P1", "P2"}:
+                reasoning += " Mark incident for priority callback and supervisor review immediately."
+            state["agent_trail"].append(
+                {
+                    "agent": "dispatch",
+                    "timestamp": datetime.now(),
+                    "decision": decision,
+                    "reasoning": reasoning,
+                }
+            )
+            return {
+                **state,
+                "assigned_resources": [],
+                "dispatch_status": "awaiting_location",
+                "dispatch_timestamp": None,
+            }
 
         for req in requirements:
-            resource_type = req["type"]
+            available = await self.query_available_resources(req["type"])
             quantity = req.get("quantity", 1)
-            available = await self.query_available_resources(resource_type)
-
             if not available:
-                state["errors"].append(f"No available {resource_type}")
+                state["errors"].append(f"No available {req['type']}")
                 continue
 
             for resource in available[: min(quantity, len(available))]:
@@ -125,23 +175,22 @@ class DispatchAgent:
                 assigned_resources.append(
                     {
                         "resource_id": resource["resource_id"],
-                        "resource_type": resource_type,
+                        "resource_type": req["type"],
                         "eta_minutes": round(eta, 1),
                         "distance_km": round(eta * 0.5, 2),
                         "route": [],
                     }
                 )
 
-        if assigned_resources:
-            decision = f"Dispatched {len(assigned_resources)} resource(s)"
-            reasoning = ", ".join(
-                f"{resource['resource_type']} {resource['resource_id']} (ETA: {resource['eta_minutes']} min)"
+        decision = "Dispatched resources" if assigned_resources else "No resources assigned"
+        reasoning = (
+            ", ".join(
+                f"{resource['resource_type']} {resource['resource_id']} ETA {resource['eta_minutes']}m"
                 for resource in assigned_resources
             )
-        else:
-            decision = "No resources assigned"
-            reasoning = "No available units matching requirements"
-
+            if assigned_resources
+            else "No suitable resources were available for the requested capability."
+        )
         state["agent_trail"].append(
             {
                 "agent": "dispatch",
@@ -154,6 +203,6 @@ class DispatchAgent:
         return {
             **state,
             "assigned_resources": assigned_resources,
-            "dispatch_status": "assigned" if assigned_resources else "pending",
+            "dispatch_status": "assigned" if assigned_resources else "resource_unavailable",
             "dispatch_timestamp": datetime.now() if assigned_resources else None,
         }
