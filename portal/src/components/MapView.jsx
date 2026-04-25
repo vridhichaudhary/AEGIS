@@ -125,6 +125,16 @@ const MapView = ({ incidents = [], resources = [], focusOn = null }) => {
     if (!mapInstance.current) return;
     incidents.forEach(incident => {
       if (incident.dispatch_status === 'completed' || incident.dispatch_status === 'merged_duplicate' || incident.incident_status === 'RESOLVED') return;
+      
+      // PRIORITIZE COORDINATES FROM BACKEND
+      if (incident.location?.latitude && incident.location?.longitude) {
+        resolvedIncidents.current.set(incident.incident_id, { 
+          lat: incident.location.latitude, 
+          lng: incident.location.longitude 
+        });
+        return;
+      }
+
       const locString = incident.location?.raw_text;
       if (locString && !resolvedIncidents.current.has(incident.incident_id)) {
         if (!geocodeQueue.current.some(q => q.id === incident.incident_id)) {
@@ -264,7 +274,7 @@ const MapView = ({ incidents = [], resources = [], focusOn = null }) => {
         </div>
       </div>
 
-      <div ref={mapRef} className="flex-1 z-0"></div>
+      <div ref={mapRef} className="flex-1 z-0 min-h-[400px]"></div>
 
       {/* Floating Zoom Controls */}
       <div className="absolute bottom-6 right-6 z-20 flex flex-col gap-2">

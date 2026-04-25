@@ -18,9 +18,15 @@ import db.database as db
 
 app = FastAPI(title="AEGIS API", version="1.0.0")
 
+# CORS Setup
+origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()]
+if settings.ENVIRONMENT == "production":
+    # Allow any Vercel domain and the Render domain in production
+    origins.append("*") 
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()],
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
