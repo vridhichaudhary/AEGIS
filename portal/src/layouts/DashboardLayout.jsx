@@ -11,6 +11,7 @@ const DashboardLayout = ({
   sidebar, 
   mainLeft, 
   mainRight,
+  extra,
   mciActive = false 
 }) => {
   return (
@@ -39,6 +40,9 @@ const DashboardLayout = ({
           </div>
         </main>
       </div>
+
+      {/* OVERLAYS / EXTRA */}
+      {extra}
     </div>
   );
 };

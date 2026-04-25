@@ -244,3 +244,83 @@ html, body, #root {
 .sidebar-section:last-child {
   border-bottom: none;
 }
+
+/* ─── Incident Card Enhancements ─── */
+@keyframes incident-new-pulse {
+  0% { border-left-width: 4px; }
+  50% { border-left-width: 8px; border-left-color: #fff; box-shadow: 0 0 15px rgba(255,255,255,0.2); }
+  100% { border-left-width: 4px; }
+}
+
+@keyframes incident-scale-in {
+  from { transform: scale(0.97); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.animate-incident-new {
+  animation: incident-new-pulse 1s ease-in-out 3, incident-scale-in 0.4s ease-out forwards;
+}
+
+/* Category CSS Shapes */
+.shape-flame {
+  width: 10px; height: 14px; background: #EF4444;
+  border-radius: 50% 50% 20% 20% / 80% 80% 20% 20%;
+  position: relative; box-shadow: 0 0 5px rgba(239,68,68,0.5);
+}
+.shape-pulse {
+  width: 14px; height: 10px; position: relative;
+  border-bottom: 2px solid #3B82F6;
+}
+.shape-pulse::after {
+  content: ''; position: absolute; bottom: 0; left: 4px;
+  width: 6px; height: 8px; border-left: 2px solid #3B82F6; border-top: 2px solid #3B82F6;
+  transform: skewX(-20deg);
+}
+
+.shape-badge {
+  width: 12px; height: 14px; background: #3B82F6;
+  clip-path: polygon(50% 0%, 100% 25%, 100% 75%, 50% 100%, 0% 75%, 0% 25%);
+}
+
+.shape-buoy {
+  width: 14px; height: 14px; border: 3px solid #F97316;
+  border-radius: 50%; position: relative;
+}
+.shape-buoy::after {
+  content: ''; position: absolute; top: 50%; left: -3px;
+  width: 14px; height: 2px; background: #F97316; transform: translateY(-50%);
+}
+
+/* Resource CSS Shapes */
+.res-shape { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+.res-medic { background: #EF4444; position: relative; }
+.res-medic::after { content: '+'; position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: white; font-size: 8px; font-weight: bold; }
+.res-fire  { background: #F97316; border-radius: 50% 50% 0 0; }
+.res-police { background: #3B82F6; clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%); }
+
+/* Detail Panel Sidebar */
+.detail-panel {
+  position: fixed; top: 0; right: 0; height: 100%; width: 380px;
+  background: var(--aegis-bg-surface);
+  border-left: 1px solid var(--aegis-border);
+  box-shadow: -10px 0 30px rgba(0,0,0,0.5);
+  z-index: 100; transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.detail-panel.open { transform: translateX(0); }
+
+.context-menu {
+  position: fixed; z-index: 1000;
+  background: var(--aegis-bg-elevated);
+  border: 1px solid var(--aegis-border-bright);
+  border-radius: 6px; box-shadow: 0 10px 25px rgba(0,0,0,0.6);
+  padding: 4px; min-width: 160px;
+}
+.context-menu-item {
+  padding: 8px 12px; font-size: 11px; font-weight: 600;
+  color: var(--aegis-text-secondary); cursor: pointer;
+  border-radius: 4px; display: flex; align-items: center; gap: 8px;
+}
+.context-menu-item:hover {
+  background: var(--aegis-bg-hover); color: var(--aegis-text-primary);
+}

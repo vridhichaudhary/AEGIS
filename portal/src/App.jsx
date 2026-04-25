@@ -17,6 +17,7 @@ import MCIPanel from './components/MCIPanel';
 import WhatsAppSimulator from './components/WhatsAppSimulator';
 import DashboardLayout from './layouts/DashboardLayout';
 import IncidentDetailModal from './components/IncidentDetailModal';
+import IncidentDetailPanel from './components/IncidentDetailPanel';
 import { connectWebSocket } from './utils/websocket';
 import { Activity } from 'lucide-react';
 
@@ -32,7 +33,8 @@ function App() {
   const [reportData, setReportData] = useState(null);
   
   // Interaction states
-  const [focusedIncident, setFocusedIncident] = useState(null);
+  const [selectedIncident, setSelectedIncident] = useState(null);
+  const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [mapFocus, setMapFocus] = useState(null);
 
   const [metrics, setMetrics] = useState({
@@ -192,6 +194,7 @@ function App() {
   const resolveIncident = async (id) => {
     const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
     await fetch(`${apiBase}/api/v1/incidents/${id}/resolve`, { method: 'POST' });
+    setIsPanelOpen(false);
   };
 
   const handleCallback = async (id) => {
@@ -207,7 +210,12 @@ function App() {
     if (incident.location?.latitude) {
       setMapFocus({ lat: incident.location.latitude, lng: incident.location.longitude });
     }
-    setFocusedIncident(incident);
+    setSelectedIncident(incident);
+    setIsPanelOpen(true);
+  };
+
+  const handleAddNote = (incident) => {
+    alert(`Adding dispatch note to INC-${incident.incident_id.slice(0,8)}...`);
   };
 
   return (
@@ -298,9 +306,15 @@ function App() {
               <SimulatorConsole />
             </div>
 
-            <div className={`card-flush h-[280px] flex-shrink-0 ${pulsePanels.queue ? 'panel-pulse' : ''}`}>
-              <div className="section-header">Priority Queue</div>
-              <PriorityQueue incidents={incidents} onResolve={resolveIncident} onFocus={handleFocusIncident} />
+            <div className={`card-flush flex-1 min-h-0 ${pulsePanels.queue ? 'panel-pulse' : ''}`}>
+              <PriorityQueue 
+                incidents={incidents} 
+                onResolve={resolveIncident} 
+                onFocus={handleFocusIncident}
+                onAddNote={handleAddNote}
+                mViewTimeline={handleFocusIncident}
+                isMci={mciState.active}
+              />
             </div>
 
             <div className={`card-flush h-[200px] flex-shrink-0 ${pulsePanels.agents ? 'panel-pulse' : ''}`}>
@@ -325,9 +339,18 @@ function App() {
             <ReviewQueue incidents={incidents} />
           </>
         }
+        extra={
+          <IncidentDetailPanel 
+            incident={selectedIncident} 
+            isOpen={isPanelOpen} 
+            onClose={() => setIsPanelOpen(false)}
+            onResolve={resolveIncident}
+            events={agentEvents}
+            hospitals={hospitals}
+          />
+        }
       />
       <AARModal data={reportData} onClose={() => setReportData(null)} />
-      <IncidentDetailModal incident={focusedIncident} onClose={() => setFocusedIncident(null)} />
     </>
   );
 }
