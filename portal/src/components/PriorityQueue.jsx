@@ -1,10 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { AlertCircle, Search, Filter } from 'lucide-react';
 import IncidentCard from './IncidentCard';
 
 const PriorityQueue = ({ incidents, onResolve, onFocus, onAddNote, mViewTimeline, isMci }) => {
   const [activeTab, setActiveTab] = useState('ALL');
   const [searchTerm, setSearchTerm] = useState('');
+  const scrollRef = useRef(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }, [incidents.length]);
 
   const agencyFilter = (incident) => {
     if (activeTab === 'ALL') return true;
@@ -88,7 +95,7 @@ const PriorityQueue = ({ incidents, onResolve, onFocus, onAddNote, mViewTimeline
         ))}
       </div>
       
-      <div className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
         {sortedIncidents.length === 0 ? (
           <div className="h-full flex flex-col items-center justify-center text-aegis-text-muted text-[10px] uppercase tracking-widest opacity-30 italic py-12">
             <p>System Normal</p>

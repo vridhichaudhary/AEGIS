@@ -15,11 +15,12 @@ import SystemLearning from './components/SystemLearning';
 import HospitalStatusPanel from './components/HospitalStatusPanel';
 import MCIPanel from './components/MCIPanel';
 import WhatsAppSimulator from './components/WhatsAppSimulator';
+import DemoController from './components/DemoController';
 import DashboardLayout from './layouts/DashboardLayout';
 import IncidentDetailModal from './components/IncidentDetailModal';
 import IncidentDetailPanel from './components/IncidentDetailPanel';
 import { connectWebSocket } from './utils/websocket';
-import { Activity } from 'lucide-react';
+import { Activity, Terminal } from 'lucide-react';
 
 function App() {
   const [incidents, setIncidents] = useState([]);
@@ -36,6 +37,10 @@ function App() {
   const [selectedIncident, setSelectedIncident] = useState(null);
   const [isPanelOpen, setIsPanelOpen] = useState(false);
   const [mapFocus, setMapFocus] = useState(null);
+
+  // Demo state
+  const [isDemoRunning, setIsDemoRunning] = useState(false);
+  const [demoStep, setDemoStep] = useState(null);
 
   const [metrics, setMetrics] = useState({
     active_incidents: 0,
@@ -172,12 +177,32 @@ function App() {
         triggerPulse('callback');
         setCallbacks(prev => [data.payload, ...prev.filter(c => c.incident_id !== data.payload.incident_id)]);
       }
+      else if (data.type === 'callback_resolved') {
+        setCallbacks(prev => prev.filter(c => c.incident_id !== data.payload.incident_id));
+      }
       else if (data.type === 'mci_activation') {
         setMciState({ active: true, zone: data.payload.zone, details: data.payload.details });
       }
       else if (data.type === 'mci_resolved') {
         setMciState({ active: false, zone: null, details: null });
         if (data.payload.aar_report) setReportData(data.payload.aar_report);
+      }
+      else if (data.type === 'demo_step') {
+        setDemoStep(data.payload);
+        setIsDemoRunning(true);
+      }
+      else if (data.type === 'demo_complete') {
+        setIsDemoRunning(false);
+        setDemoStep(null);
+      }
+      else if (data.type === 'demo_aar_preview') {
+        setReportData(data.payload);
+      }
+      else if (data.type === 'voice_demo_trigger') {
+        setIsLogoGlowing(true);
+      }
+      else if (data.type === 'voice_demo_response') {
+        setIsLogoGlowing(false);
       }
     };
 
@@ -216,6 +241,24 @@ function App() {
 
   const handleAddNote = (incident) => {
     alert(`Adding dispatch note to INC-${incident.incident_id.slice(0,8)}...`);
+  };
+
+  const startDemo = async (speed = 1.0) => {
+    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
+    // Reset state for clean demo
+    setIncidents([]);
+    setAgentEvents([]);
+    setCallbacks([]);
+    setMciState({ active: false, zone: null, details: null });
+    await fetch(`${apiBase}/api/v1/demo/start?speed=${speed}`);
+    setIsDemoRunning(true);
+  };
+
+  const stopDemo = async () => {
+    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
+    await fetch(`${apiBase}/api/v1/demo/stop`, { method: 'POST' });
+    setIsDemoRunning(false);
+    setDemoStep(null);
   };
 
   return (
@@ -340,14 +383,22 @@ function App() {
           </>
         }
         extra={
-          <IncidentDetailPanel 
-            incident={selectedIncident} 
-            isOpen={isPanelOpen} 
-            onClose={() => setIsPanelOpen(false)}
-            onResolve={resolveIncident}
-            events={agentEvents}
-            hospitals={hospitals}
-          />
+          <>
+            <IncidentDetailPanel 
+              incident={selectedIncident} 
+              isOpen={isPanelOpen} 
+              onClose={() => setIsPanelOpen(false)}
+              onResolve={resolveIncident}
+              events={agentEvents}
+              hospitals={hospitals}
+            />
+            <DemoController 
+              onStart={startDemo}
+              onStop={stopDemo}
+              activeStep={demoStep}
+              isRunning={isDemoRunning}
+            />
+          </>
         }
       />
       <AARModal data={reportData} onClose={() => setReportData(null)} />

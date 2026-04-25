@@ -1,8 +1,8 @@
 import asyncio
 from datetime import datetime
 from typing import Dict, List, Optional
-
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, File, UploadFile, Form
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, File, UploadFile, Form, Query
+import random
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -72,6 +72,127 @@ MCI_STATE = {
     "details": None
 }
 LATEST_THREAT_INTEL = None
+DEMO_TASK = None
+
+DEMO_SCRIPT = [
+    {
+        "act": 1,
+        "name": "Initial Triage (English)",
+        "delay": 0,
+        "transcripts": ["Fire at Connaught Place, 2 people trapped and smoke filling the corridor"],
+        "notes": "Showing baseline English triage. Note the high-confidence priority assignment (P1)."
+    },
+    {
+        "act": 2,
+        "name": "Bilingual Support (Hindi)",
+        "delay": 30,
+        "transcripts": ["bhai mere ghar mein aag lag gayi hai, main Rohini Sector 11 mein hoon, jaldi aao, bache bhi hain!"],
+        "notes": "Processing raw Hindi/Hinglish. System automatically geocodes Rohini and assigns high priority."
+    },
+    {
+        "act": 3,
+        "name": "Duplicate Detection",
+        "delay": 30,
+        "transcripts": ["There is a fire near Connaught Place metro station, lots of smoke!"],
+        "notes": "Duplicate caller detected. System merges the incident to prevent resource double-dispatch."
+    },
+    {
+        "act": 4,
+        "name": "Callback Intelligence",
+        "delay": 30,
+        "transcripts": ["someone is hurt, please help, I am near the big park"],
+        "notes": "Missing exact location. Incident placed in Callback Queue. AI suggested script generated."
+    },
+    {
+        "act": 5,
+        "name": "Flood Surge Prediction",
+        "delay": 30,
+        "transcripts": [
+            "Heavy water flooding Sector 14 market, cars floating",
+            "Building basement flooding in Sector 15, electricity sparking",
+            "Stuck in water at Sector 16 underpass",
+            "Tree fallen on house due to heavy rain in Sector 14"
+        ],
+        "notes": "Rapid influx from single area triggers Cascade Prediction Agent. Threat Intelligence panel activates."
+    },
+    {
+        "act": 6,
+        "name": "MCI Threshold",
+        "delay": 45,
+        "transcripts": ["Bus overturned in Sector 14 flood, many casualties!"],
+        "notes": "MCI Threshold crossed. System-wide protocol activation. Dashboard shifts to emergency mode."
+    },
+    {
+        "act": 7,
+        "name": "Voice Command Demo",
+        "delay": 45,
+        "command": "AEGIS, how many critical incidents are active?",
+        "notes": "Operational control via voice. Supervisor queries memory and returns live operational count."
+    },
+    {
+        "act": 8,
+        "name": "Resolution & AAR",
+        "delay": 45,
+        "action": "resolve_first",
+        "notes": "Marking first incident resolved. Resources released. NDMA-format After-Action Report auto-generated."
+    }
+]
+
+async def run_demo_loop(speed: float = 1.0):
+    global DEMO_TASK
+    try:
+        first_incident_id = None
+        for step in DEMO_SCRIPT:
+            # Respect speed for delay
+            if step["delay"] > 0:
+                await asyncio.sleep(step["delay"] / speed)
+            
+            await manager.broadcast({
+                "type": "demo_step",
+                "payload": {
+                    "act": step["act"],
+                    "name": step["name"],
+                    "notes": step["notes"]
+                }
+            })
+
+            # Handle Transcripts
+            if "transcripts" in step:
+                for t in step["transcripts"]:
+                    result = await supervisor.process_call(t)
+                    await publish_result(result)
+                    if step["act"] == 1:
+                        first_incident_id = result["incident_id"]
+                    # Add small jitter between batch calls
+                    await asyncio.sleep(2 / speed)
+            
+            # Handle Callback Simulation (Act 4)
+            if step["act"] == 4:
+                await asyncio.sleep(10 / speed)
+                # Find the latest pending callback
+                if CALLBACK_QUEUE:
+                    cb = CALLBACK_QUEUE[-1]
+                    await process_callback_response(cb["incident_id"], CallbackResponseRequest(additional_info="I am at Central Park, Gate 2."))
+
+            # Handle Commands (Act 7)
+            if "command" in step:
+                await manager.broadcast({"type": "voice_demo_trigger", "payload": step["command"]})
+                await asyncio.sleep(2 / speed)
+                res = await process_voice_command(CommandAgentRequest(command=step["command"]))
+                await manager.broadcast({"type": "voice_demo_response", "payload": res["response"]})
+
+            # Handle Actions (Act 8)
+            if step.get("action") == "resolve_first" and first_incident_id:
+                await resolve_incident(first_incident_id)
+                # Simulate AAR generation
+                aar = await generate_aar()
+                await manager.broadcast({"type": "demo_aar_preview", "payload": aar})
+
+        await manager.broadcast({"type": "demo_complete", "payload": {}})
+    except Exception as e:
+        print(f"Demo Error: {e}")
+    finally:
+        DEMO_TASK = None
 
 async def proactive_threat_loop():
     while True:
@@ -770,6 +891,24 @@ async def process_simulated_incident(transcript: str):
         await publish_result(result)
     except Exception as exc:
         print(f"Simulation error: {exc}")
+
+
+@app.get("/api/v1/demo/start")
+async def start_demo(speed: float = Query(1.0, ge=0.5, le=5.0)):
+    global DEMO_TASK
+    if DEMO_TASK:
+        raise HTTPException(status_code=400, detail="Demo already running")
+    
+    DEMO_TASK = asyncio.create_task(run_demo_loop(speed))
+    return {"status": "started", "speed": speed}
+
+@app.post("/api/v1/demo/stop")
+async def stop_demo():
+    global DEMO_TASK
+    if DEMO_TASK:
+        DEMO_TASK.cancel()
+        DEMO_TASK = None
+    return {"status": "stopped"}
 
 
 if __name__ == "__main__":
