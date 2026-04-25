@@ -269,6 +269,8 @@ def get_latest_insight() -> dict:
             "patterns_found": json.loads(row[0]) if row[0] else [],
             "rule_suggestions": json.loads(row[1]) if row[1] else [],
             "performance_delta": json.loads(row[2]) if row[2] else {},
+            "timestamp": row[3]
+        }
 def get_patterns(limit: int = 10) -> list:
     with get_connection() as conn:
         cursor = conn.cursor()
