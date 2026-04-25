@@ -49,17 +49,29 @@ class BaseAgent:
         if os.environ.get("AEGIS_DISABLE_LLM", "").lower() in {"1", "true", "yes"}:
             return None
 
-        # Try Groq first
-        if settings.GROQ_API_KEY and ChatGroq is not None:
+        provider = settings.LLM_PROVIDER.lower()
+
+        # If Google is selected
+        if provider == "google" and settings.GOOGLE_API_KEY and ChatGoogleGenerativeAI is not None:
+            return ChatGoogleGenerativeAI(
+                model=settings.LLM_MODEL,
+                google_api_key=settings.GOOGLE_API_KEY,
+                temperature=temperature,
+                max_output_tokens=2048,
+                convert_system_message_to_human=True,
+            )
+
+        # If Groq is selected
+        if provider == "groq" and settings.GROQ_API_KEY and ChatGroq is not None:
             return ChatGroq(
                 model="llama-3.3-70b-versatile",
                 api_key=settings.GROQ_API_KEY,
                 temperature=temperature,
                 max_tokens=2048,
             )
-            
-        # Try xAI (Grok) second
-        if settings.XAI_API_KEY and ChatXAI is not None:
+
+        # If xAI is selected
+        if provider == "xai" and settings.XAI_API_KEY and ChatXAI is not None:
             return ChatXAI(
                 model="grok-beta",
                 xai_api_key=settings.XAI_API_KEY,
@@ -67,14 +79,19 @@ class BaseAgent:
                 max_tokens=2048,
             )
 
-        # Fallback to Gemini
+        # Fallback Chain if preferred provider fails/missing
+        if settings.GROQ_API_KEY and ChatGroq is not None:
+            return ChatGroq(
+                model="llama-3.3-70b-versatile",
+                api_key=settings.GROQ_API_KEY,
+                temperature=temperature,
+            )
+            
         if settings.GOOGLE_API_KEY and ChatGoogleGenerativeAI is not None:
             return ChatGoogleGenerativeAI(
-                model=settings.LLM_MODEL,
+                model="gemini-1.5-flash",
                 google_api_key=settings.GOOGLE_API_KEY,
                 temperature=temperature,
-                max_output_tokens=2048,
-                convert_system_message_to_human=True,
             )
 
         return None
