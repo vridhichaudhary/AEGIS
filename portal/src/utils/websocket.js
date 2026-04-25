@@ -37,7 +37,9 @@ export const connectWebSocket = (onMessage, url = defaultWebSocketUrl()) => {
     };
 
     ws.onerror = (err) => {
-      console.error('WebSocket Error:', err);
+      console.error("WebSocket Error State:", ws.readyState);
+      console.error("WebSocket Connection failed to:", socketUrl);
+      console.error('Detailed Error:', err);
     };
 
     ws.onclose = () => {
