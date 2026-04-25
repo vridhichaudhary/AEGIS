@@ -64,9 +64,17 @@ class EmergencyCallResponse(BaseModel):
     eta_minutes: Optional[float]
     dispatch_status: str
     agent_trail: List[dict]
+    golden_hour_deadline: Optional[str] = None
+    golden_hour_at_risk: Optional[bool] = None
+    authenticity_score: Optional[int] = None
+    joint_dispatch_memo: Optional[dict] = None
+    agency_timings: Optional[dict] = None
 
 
 def serialize_incident(result: dict) -> dict:
+    # Convert confidence_score float (0.0-1.0) back to int (0-100) for frontend gauge
+    score = int(result.get("confidence_score", 1.0) * 100)
+    
     return {
         "incident_id": result["incident_id"],
         "priority": result["priority"],
@@ -76,6 +84,11 @@ def serialize_incident(result: dict) -> dict:
         "incident_type": result.get("incident_type"),
         "assigned_resources": result.get("assigned_resources", []),
         "errors": result.get("errors", []),
+        "golden_hour_deadline": result.get("golden_hour_deadline").isoformat() if result.get("golden_hour_deadline") else None,
+        "golden_hour_at_risk": result.get("golden_hour_at_risk", False),
+        "authenticity_score": score,
+        "joint_dispatch_memo": result.get("joint_dispatch_memo"),
+        "agency_timings": result.get("agency_timings"),
     }
 
 

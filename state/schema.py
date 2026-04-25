@@ -51,11 +51,15 @@ class AgentState(TypedDict):
     resource_requirements: List[dict]
     estimated_severity: str
     triage_reasoning: str
+    golden_hour_deadline: Optional[datetime]
+    golden_hour_at_risk: Optional[bool]
     
     # Dispatch
     assigned_resources: List[dict]
     dispatch_status: str
     dispatch_timestamp: Optional[datetime]
+    joint_dispatch_memo: Optional[dict]
+    agency_timings: Optional[dict]
     
     # Metadata
     agent_trail: List[dict]

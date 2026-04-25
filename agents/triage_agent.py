@@ -1,5 +1,5 @@
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List
 
 from agents.base_agent import BaseAgent
@@ -17,6 +17,7 @@ class TriageResult(BaseModel):
     priority_justification: str = Field(description="Reasoning for the assigned priority")
     required_resources: List[ResourceRequirement] = Field(description="List of resources required to handle the emergency")
     estimated_severity: str = Field(description="One of: critical, serious, moderate, minor")
+    golden_hour_at_risk: bool = Field(description="True if it is likely that definitive care cannot be reached within 60 minutes", default=False)
 
 class TriageAgent(BaseAgent):
     """High-recall triage for life-critical emergencies."""
@@ -40,6 +41,7 @@ class TriageAgent(BaseAgent):
                 "priority_justification": "Non-emergency or probable prank indicators detected.",
                 "required_resources": [],
                 "estimated_severity": "minor",
+                "golden_hour_at_risk": False,
             }
 
         if category == "fire" and (
@@ -56,6 +58,7 @@ class TriageAgent(BaseAgent):
                     {"type": "ambulance_trauma", "quantity": 1, "specialized": True},
                 ],
                 "estimated_severity": "critical",
+                "golden_hour_at_risk": True,
             }
 
         if category == "medical" and any(
@@ -66,6 +69,7 @@ class TriageAgent(BaseAgent):
                 "priority_justification": "Potential cardiac or airway compromise requires immediate intervention.",
                 "required_resources": [{"type": "ambulance_cardiac", "quantity": 1, "specialized": True}],
                 "estimated_severity": "critical",
+                "golden_hour_at_risk": True,
             }
 
         if category == "medical" and subcategory == "obstetric_emergency":
@@ -74,6 +78,7 @@ class TriageAgent(BaseAgent):
                 "priority_justification": "Active labor complication may become life-threatening rapidly.",
                 "required_resources": [{"type": "ambulance", "quantity": 1, "specialized": False}],
                 "estimated_severity": "critical",
+                "golden_hour_at_risk": False,
             }
 
         if category == "accident" and (
@@ -88,6 +93,7 @@ class TriageAgent(BaseAgent):
                     {"type": "police", "quantity": 1, "specialized": False},
                 ],
                 "estimated_severity": "critical",
+                "golden_hour_at_risk": True,
             }
 
         if category == "natural_disaster":
@@ -100,6 +106,7 @@ class TriageAgent(BaseAgent):
                     {"type": "ambulance", "quantity": 1, "specialized": False},
                 ],
                 "estimated_severity": "critical" if priority == "P1" else "serious",
+                "golden_hour_at_risk": True if priority == "P1" else False,
             }
 
         if category == "violence":
@@ -112,6 +119,7 @@ class TriageAgent(BaseAgent):
                 "priority_justification": "Active violence with weapon risk requires urgent police-led response.",
                 "required_resources": resources,
                 "estimated_severity": "critical" if priority == "P1" else "serious",
+                "golden_hour_at_risk": True if priority == "P1" else False,
             }
 
         if category == "fire":
@@ -120,6 +128,7 @@ class TriageAgent(BaseAgent):
                 "priority_justification": "Fire emergency requires urgent response even without confirmed entrapment.",
                 "required_resources": [{"type": "fire_truck", "quantity": 1, "specialized": False}],
                 "estimated_severity": "serious",
+                "golden_hour_at_risk": False,
             }
 
         if category == "medical":
@@ -128,6 +137,7 @@ class TriageAgent(BaseAgent):
                 "priority_justification": "Medical emergency needs rapid ambulance evaluation.",
                 "required_resources": [{"type": "ambulance", "quantity": 1, "specialized": False}],
                 "estimated_severity": "serious",
+                "golden_hour_at_risk": False,
             }
 
         return {
@@ -135,6 +145,7 @@ class TriageAgent(BaseAgent):
             "priority_justification": "Insufficient evidence of an active emergency after validation.",
             "required_resources": [],
             "estimated_severity": "minor",
+            "golden_hour_at_risk": False,
         }
 
     async def process(self, state: dict) -> dict:
@@ -144,6 +155,8 @@ class TriageAgent(BaseAgent):
             format_instructions = self.parser.get_format_instructions()
             prompt = f"""You are an expert emergency dispatch triage officer.
 Your task is to assign an emergency priority (P1-P5) and allocate resources based on standard operating procedures.
+
+Evaluate if this incident can receive definitive care within the 60-minute golden hour. If not, escalate priority and flag golden_hour_at_risk=true.
 
 Guidelines:
 - P1 (Critical): Life-threatening. E.g., Fire with entrapment, cardiac arrest, major trauma, active shooter.
@@ -167,23 +180,30 @@ Confidence: {state['confidence_score']}
         if triage_data is None:
             triage_data = self.heuristic_triage(state)
 
-        priority_score = self.PRIORITY_SCORES.get(triage_data["priority_level"], 3.0)
+        priority = triage_data.get("priority_level", "P4")
+        priority_score = self.PRIORITY_SCORES.get(priority, 3.0)
         priority_score += state["distress_score"] * 0.5
+
+        is_critical = priority in ["P1", "P2"]
+        golden_hour_deadline = state["timestamp"] + timedelta(minutes=60) if is_critical else None
+        golden_hour_at_risk = triage_data.get("golden_hour_at_risk", is_critical) if is_critical else False
 
         state["agent_trail"].append(
             {
                 "agent": "triage",
                 "timestamp": datetime.now(),
-                "decision": f"Assigned {triage_data['priority_level']}",
-                "reasoning": triage_data["priority_justification"],
+                "decision": f"Assigned {priority}{' - ⚠ GOLDEN HOUR AT RISK' if golden_hour_at_risk else ''}",
+                "reasoning": triage_data.get("priority_justification", ""),
             }
         )
 
         return {
             **state,
-            "priority": triage_data["priority_level"],
+            "priority": priority,
             "priority_score": priority_score,
-            "resource_requirements": triage_data["required_resources"],
-            "estimated_severity": triage_data["estimated_severity"],
-            "triage_reasoning": triage_data["priority_justification"],
+            "resource_requirements": triage_data.get("required_resources", []),
+            "estimated_severity": triage_data.get("estimated_severity", "minor"),
+            "triage_reasoning": triage_data.get("priority_justification", ""),
+            "golden_hour_deadline": golden_hour_deadline,
+            "golden_hour_at_risk": golden_hour_at_risk,
         }

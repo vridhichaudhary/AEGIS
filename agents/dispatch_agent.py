@@ -3,8 +3,12 @@ from __future__ import annotations
 import json
 import random
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Literal
 
+from agents.base_agent import BaseAgent
+from langchain_core.messages import HumanMessage
+from langchain_core.output_parsers import JsonOutputParser
+from pydantic import BaseModel, Field
 from config.settings import settings
 
 try:
@@ -12,8 +16,13 @@ try:
 except ImportError:  # pragma: no cover
     redis = None
 
+class JointDispatchMemo(BaseModel):
+    police_instructions: str = Field(description="Instructions for Police (100) or 'None'")
+    fire_instructions: str = Field(description="Instructions for Fire (101) or 'None'")
+    medical_instructions: str = Field(description="Instructions for Medical (108) or 'None'")
+    unified_incident_commander: str = Field(description="Agency taking the lead: POLICE, FIRE, or MEDICAL")
 
-class DispatchAgent:
+class DispatchAgent(BaseAgent):
     """Dispatches safely, with explicit hold states when location is missing."""
 
     _fallback_resources = {
@@ -49,6 +58,8 @@ class DispatchAgent:
     }
 
     def __init__(self):
+        super().__init__(temperature=0)
+        self.parser = JsonOutputParser(pydantic_object=JointDispatchMemo)
         self.redis_client = None
         if redis is not None:
             try:
@@ -129,6 +140,26 @@ class DispatchAgent:
                 "assigned_resources": [],
                 "dispatch_status": "merged_duplicate",
                 "dispatch_timestamp": None,
+                "joint_dispatch_memo": None,
+                "agency_timings": None,
+            }
+
+        if "review_required" in state.get("validation_flags", []):
+            state["agent_trail"].append(
+                {
+                    "agent": "dispatch",
+                    "timestamp": datetime.now(),
+                    "decision": "Dispatch held pending human review",
+                    "reasoning": "Validation score indicates potential hoax/prank. Retaining incident in Review Queue.",
+                }
+            )
+            return {
+                **state,
+                "assigned_resources": [],
+                "dispatch_status": "review_required",
+                "dispatch_timestamp": None,
+                "joint_dispatch_memo": None,
+                "agency_timings": None,
             }
 
         if state["priority"] == "P5":
@@ -140,7 +171,63 @@ class DispatchAgent:
                     "reasoning": "Incident classified as non-emergency after validation and triage.",
                 }
             )
-            return {**state, "assigned_resources": [], "dispatch_status": "not_required", "dispatch_timestamp": None}
+            return {
+                **state, 
+                "assigned_resources": [], 
+                "dispatch_status": "not_required", 
+                "dispatch_timestamp": None,
+                "joint_dispatch_memo": None,
+                "agency_timings": None,
+            }
+
+        joint_dispatch_memo = None
+        agency_timings = None
+
+        if self.llm_available and HumanMessage is not None:
+            prompt = f"""You are a multi-agency dispatch coordinator in India.
+Analyze the incident and determine which agencies need to be involved:
+- POLICE (100): crowd control, crime scenes, traffic management, violence
+- FIRE (101): structural fires, gas leaks, entrapment, major rescue
+- MEDICAL (108): injuries, cardiac events, poisoning
+
+Generate a joint dispatch memo containing specific instructions for the relevant agencies. If an agency is not needed, set its instructions to 'None'.
+
+Incident Type: {state.get('incident_type', {}).get('category', 'unknown')}
+Transcript: {state.get('normalized_text', '')}
+Requirements: {requirements}
+
+{self.parser.get_format_instructions()}"""
+            try:
+                response = await self.invoke_llm([HumanMessage(content=prompt)])
+                joint_dispatch_memo = self.parser.parse(response.content)
+                
+                # Compute agency timings if memo exists
+                involved_agencies = []
+                if joint_dispatch_memo.get("police_instructions", "None").lower() not in ["none", "n/a", ""]:
+                    involved_agencies.append("POLICE")
+                if joint_dispatch_memo.get("fire_instructions", "None").lower() not in ["none", "n/a", ""]:
+                    involved_agencies.append("FIRE")
+                if joint_dispatch_memo.get("medical_instructions", "None").lower() not in ["none", "n/a", ""]:
+                    involved_agencies.append("MEDICAL")
+                
+                if len(involved_agencies) > 0:
+                    timings = {}
+                    for idx, agency in enumerate(involved_agencies):
+                        delay = random.uniform(10 + idx*15, 25 + idx*25) 
+                        timings[agency] = delay
+                    
+                    sorted_agencies = sorted(timings.keys(), key=lambda a: timings[a])
+                    timeline = [{"agency": a, "delay_seconds": round(timings[a], 1)} for a in sorted_agencies]
+                    gap = timeline[-1]["delay_seconds"] - timeline[0]["delay_seconds"] if len(timeline) > 1 else 0.0
+                    
+                    agency_timings = {
+                        "timeline": timeline,
+                        "coordination_gap_seconds": round(gap, 1),
+                        "is_multi_agency": len(timeline) > 1
+                    }
+
+            except Exception as exc:
+                state["errors"].append(f"Dispatch LLM fallback: {exc}")
 
         if not has_location:
             decision = "Dispatch held pending callback"
@@ -160,6 +247,8 @@ class DispatchAgent:
                 "assigned_resources": [],
                 "dispatch_status": "awaiting_location",
                 "dispatch_timestamp": None,
+                "joint_dispatch_memo": joint_dispatch_memo,
+                "agency_timings": agency_timings,
             }
 
         for req in requirements:
@@ -205,4 +294,6 @@ class DispatchAgent:
             "assigned_resources": assigned_resources,
             "dispatch_status": "assigned" if assigned_resources else "resource_unavailable",
             "dispatch_timestamp": datetime.now() if assigned_resources else None,
+            "joint_dispatch_memo": joint_dispatch_memo,
+            "agency_timings": agency_timings,
         }
