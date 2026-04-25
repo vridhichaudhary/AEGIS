@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -11,6 +11,7 @@ from agents.base_agent import BaseAgent
 from agents.cascade_agent import CascadePredictionAgent
 from agents.command_agent import CommandAgent
 from agents.report_agent import ReportAgent
+from agents.audio_agent import AudioIngestionAgent
 from config.settings import settings
 from simulation.scenarios import SimulationScenarios
 import db.database as db
@@ -55,6 +56,7 @@ supervisor = SupervisorAgent()
 cascade_agent = CascadePredictionAgent()
 command_agent = CommandAgent()
 report_agent = ReportAgent()
+audio_agent = AudioIngestionAgent()
 active_incidents: Dict[str, dict] = {}
 
 async def proactive_threat_loop():
@@ -152,6 +154,7 @@ def serialize_incident(result: dict) -> dict:
         "is_duplicate": result.get("is_duplicate", False),
         "duplicate_of": result.get("duplicate_of"),
         "duplicate_confidence": result.get("duplicate_confidence", 0.0),
+        "audio_source": result.get("audio_source"),
     }
 
 
@@ -336,6 +339,40 @@ async def get_metrics_snapshot():
     # Run DB fetch in background thread
     metrics = await asyncio.to_thread(db.get_metrics)
     return metrics
+
+@app.post("/api/v1/emergency/audio", response_model=EmergencyCallResponse)
+async def report_emergency_audio(audio: UploadFile = File(...), caller_id: Optional[str] = Form(None)):
+    audio_bytes = await audio.read()
+    filename = audio.filename or "audio.wav"
+    ext = filename.split(".")[-1].lower() if "." in filename else "wav"
+    
+    # Process audio with whisper in background thread
+    transcription = await asyncio.to_thread(audio_agent.transcribe, audio_bytes, ext)
+    transcript_text = transcription.get("transcript", "")
+    
+    if not transcript_text or transcript_text.startswith("[Transcription Error"):
+        raise HTTPException(status_code=400, detail=f"Failed to transcribe audio: {transcript_text}")
+        
+    try:
+        result = await supervisor.process_call(raw_transcript=transcript_text, caller_id=caller_id)
+        # Inject metadata for frontend
+        result["audio_source"] = "voice_upload"
+        result["transcription_confidence"] = transcription.get("confidence")
+        
+        eta = min((resource["eta_minutes"] for resource in result["assigned_resources"]), default=None)
+        await publish_result(result)
+
+        return EmergencyCallResponse(
+            incident_id=result["incident_id"],
+            status="processed",
+            priority=result["priority"],
+            assigned_resources=result["assigned_resources"],
+            eta_minutes=eta,
+            dispatch_status=result["dispatch_status"],
+            agent_trail=result["agent_trail"],
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 @app.post("/api/v1/emergency/report", response_model=EmergencyCallResponse)
 async def report_emergency(request: EmergencyCallRequest):

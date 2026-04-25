@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Clock, MapPin, AlertCircle, ShieldAlert } from 'lucide-react';
+import { Clock, MapPin, AlertCircle, ShieldAlert, Mic } from 'lucide-react';
 
 const CountdownTimer = ({ deadline }) => {
   const [timeLeft, setTimeLeft] = useState(0);
@@ -204,6 +204,11 @@ const PriorityQueue = ({ incidents, onResolve }) => {
                     {isJointOps && (
                        <span className="ml-1 text-[9px] bg-indigo-500/20 text-indigo-300 px-1.5 py-0.5 rounded border border-indigo-500/30 font-bold uppercase tracking-widest">
                          JOINT OPS
+                       </span>
+                    )}
+                    {incident.audio_source === 'voice_upload' && (
+                       <span className="ml-1 text-[9px] bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded border border-purple-500/30 font-bold uppercase tracking-widest flex items-center gap-1">
+                         <Mic size={10} /> AUDIO
                        </span>
                     )}
                   </div>

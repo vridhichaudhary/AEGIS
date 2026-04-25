@@ -101,6 +101,8 @@ function App() {
           llm_ready: false,
         }));
       }
+    };
+
     const loadResources = async () => {
       try {
         const response = await fetch(`${apiBase}/api/v1/resources`);
