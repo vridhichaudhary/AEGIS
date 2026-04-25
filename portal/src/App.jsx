@@ -11,6 +11,7 @@ import AARModal from './components/AARModal';
 import ReviewQueue from './components/ReviewQueue';
 import CallbackQueue from './components/CallbackQueue';
 import NovelScenarioLog from './components/NovelScenarioLog';
+import SystemLearning from './components/SystemLearning';
 import { connectWebSocket } from './utils/websocket';
 
 function App() {
@@ -413,6 +414,7 @@ function App() {
         <div className="lg:col-span-4 flex flex-col gap-4 overflow-y-auto min-h-0 pr-1 custom-scrollbar">
           <ThreatIntelligencePanel data={threatIntelligence} />
           <Metrics data={metrics} />
+          <SystemLearning />
           <CallbackQueue callbacks={callbacks} onSimulateResponse={handleSimulateCallbackResponse} />
           <NovelScenarioLog incidents={incidents} />
           <ReviewQueue incidents={incidents} />

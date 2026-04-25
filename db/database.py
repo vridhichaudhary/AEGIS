@@ -58,6 +58,30 @@ def init_db():
                 updated_at TEXT
             )
         ''')
+        
+        # Patterns Table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS patterns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                incident_id TEXT,
+                incident_type TEXT,
+                context TEXT,
+                decision TEXT,
+                outcome TEXT,
+                timestamp TEXT
+            )
+        ''')
+
+        # Insights Table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS insights (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                patterns_found TEXT,
+                rule_suggestions TEXT,
+                performance_delta TEXT,
+                timestamp TEXT
+            )
+        ''')
         conn.commit()
 
 def save_incident(incident: Dict[str, Any]):
@@ -196,5 +220,79 @@ def get_metrics() -> Dict[str, Any]:
         # Total critical
         cursor.execute("SELECT COUNT(*) FROM incidents WHERE priority IN ('P1', 'P2')")
         metrics["critical_incidents"] = cursor.fetchone()[0]
+        
+        # Decisions improved by feedback
+        cursor.execute("SELECT value FROM metrics WHERE key = 'decisions_improved_by_feedback'")
+        row = cursor.fetchone()
+        metrics["decisions_improved"] = int(row[0]) if row else 0
 
         return metrics
+
+def save_pattern(pattern: dict):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO patterns (incident_id, incident_type, context, decision, outcome, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+        ''', (
+            pattern.get("incident_id"),
+            json.dumps(pattern.get("incident_type", {})),
+            pattern.get("context"),
+            pattern.get("decision"),
+            json.dumps(pattern.get("outcome", {})),
+            pattern.get("timestamp")
+        ))
+        conn.commit()
+
+def save_insight(insight: dict):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute('''
+            INSERT INTO insights (patterns_found, rule_suggestions, performance_delta, timestamp)
+            VALUES (?, ?, ?, ?)
+        ''', (
+            json.dumps(insight.get("patterns_found", [])),
+            json.dumps(insight.get("rule_suggestions", [])),
+            json.dumps(insight.get("performance_delta", {})),
+            datetime.now().isoformat()
+        ))
+        conn.commit()
+
+def get_latest_insight() -> dict:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT patterns_found, rule_suggestions, performance_delta, timestamp FROM insights ORDER BY id DESC LIMIT 1")
+        row = cursor.fetchone()
+        if not row:
+            return None
+        return {
+            "patterns_found": json.loads(row[0]) if row[0] else [],
+            "rule_suggestions": json.loads(row[1]) if row[1] else [],
+            "performance_delta": json.loads(row[2]) if row[2] else {},
+def get_patterns(limit: int = 10) -> list:
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT incident_id, incident_type, context, decision, outcome, timestamp FROM patterns ORDER BY id DESC LIMIT ?", (limit,))
+        rows = cursor.fetchall()
+        return [
+            {
+                "incident_id": row[0],
+                "incident_type": json.loads(row[1]) if row[1] else {},
+                "context": row[2],
+                "decision": row[3],
+                "outcome": json.loads(row[4]) if row[4] else {},
+                "timestamp": row[5]
+            } for row in rows
+        ]
+
+def increment_metric(key: str, amount: int = 1):
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM metrics WHERE key = ?", (key,))
+        row = cursor.fetchone()
+        if row:
+            new_val = int(row[0]) + amount
+            cursor.execute("UPDATE metrics SET value = ?, updated_at = ? WHERE key = ?", (str(new_val), datetime.now().isoformat(), key))
+        else:
+            cursor.execute("INSERT INTO metrics (key, value, updated_at) VALUES (?, ?, ?)", (key, str(amount), datetime.now().isoformat()))
+        conn.commit()

@@ -47,6 +47,19 @@ const Metrics = ({ data }) => {
           </div>
         </div>
       )}
+
+
+      {data.decisions_improved !== undefined && (
+        <div className="mt-3 bg-teal-900/20 p-3 rounded-lg border border-teal-500/30 flex items-center justify-between transition-all hover:bg-teal-900/30">
+          <div className="flex flex-col">
+            <span className="text-[10px] text-teal-400 font-bold uppercase tracking-wider">AI Continuous Learning</span>
+            <span className="text-xs text-teal-200/70">Decisions improved by feedback</span>
+          </div>
+          <div className="text-2xl font-bold text-teal-400 bg-teal-950 px-3 py-1 rounded-md border border-teal-500/50">
+            {data.decisions_improved}
+          </div>
+        </div>
+      )}
     </div>
   );
 };

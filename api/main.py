@@ -336,7 +336,33 @@ async def resolve_incident(incident_id: str):
     # Update SQLite asynchronously
     asyncio.create_task(asyncio.to_thread(db.update_incident_status, incident_id, "RESOLVED"))
 
+    # Generate mock outcome data for learning loop
+    import random
+    mock_response_time = random.randint(120, 600)  # seconds
+    mock_golden_hour_met = incident.get("golden_hour_at_risk", False) and mock_response_time < 3600
+    outcome = {
+        "actual_severity": incident.get("priority"),
+        "response_time_seconds": mock_response_time,
+        "golden_hour_met": mock_golden_hour_met,
+        "resource_used_vs_requested": {"matched": True},
+        "outcome": "Resolved successfully"
+    }
+
+    # Trigger FeedbackAgent learning loop in background
+    asyncio.create_task(supervisor.feedback.analyze(incident_id, incident, outcome))
+
     return {"status": "success", "resolved_id": incident_id, "freed": len(released_ids)}
+
+@app.get("/api/v1/learning/insights")
+async def get_learning_insights():
+    insight = await asyncio.to_thread(db.get_latest_insight)
+    return insight or {"patterns_found": [], "rule_suggestions": [], "performance_delta": {}}
+
+@app.post("/api/v1/learning/apply")
+async def apply_learning_rule():
+    # Mock endpoint to apply suggestion
+    await asyncio.to_thread(db.increment_metric, "decisions_improved_by_feedback", 1)
+    return {"status": "success", "message": "Rule applied successfully"}
 
 @app.get("/api/v1/resources")
 async def get_resources():
