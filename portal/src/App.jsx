@@ -100,9 +100,18 @@ function App() {
           llm_ready: false,
         }));
       }
+    const loadResources = async () => {
+      try {
+        const response = await fetch(`${apiBase}/api/v1/resources`);
+        const data = await response.json();
+        setResources(data.resources || []);
+      } catch (error) {
+        console.error("Failed to load resources:", error);
+      }
     };
     
     loadHealth();
+    loadResources();
     const healthInterval = setInterval(loadHealth, 30000); // Every 30 seconds
 
     // WebSocket connection
@@ -170,13 +179,34 @@ function App() {
         });
       } 
       else if (data.type === 'resource_update') {
-        setResources(data.payload);
+        const updates = data.payload;
+        setResources(prev => {
+          const newMap = new Map(prev.map(r => [r.id, r]));
+          updates.forEach(u => newMap.set(u.id, { ...newMap.get(u.id), ...u }));
+          return Array.from(newMap.values());
+        });
       } 
       else if (data.type === 'agent_event') {
         setAgentEvents(prev => [data.payload, ...prev].slice(0, 100));
       }
       else if (data.type === 'threat_intelligence') {
         setThreatIntelligence(data.payload);
+      }
+      else if (data.type === 'incident_resolved') {
+        const { incident_id } = data.payload;
+        setIncidents(prev => prev.map(inc => 
+          inc.incident_id === incident_id ? { ...inc, incident_status: 'RESOLVED', dispatch_status: 'RESOLVED' } : inc
+        ));
+      }
+      else if (data.type === 'system_alert') {
+        // Show a brief toast or notification (we'll just use console and maybe a temporary agent event)
+        const alert = data.payload;
+        setAgentEvents(prev => [{
+          agent: 'SYSTEM',
+          decision: alert.title,
+          reasoning: alert.message,
+          timestamp: new Date().toISOString()
+        }, ...prev].slice(0, 100));
       }
     };
 
@@ -189,6 +219,17 @@ function App() {
   const avgTriageTime = heroMetrics.triageTimes.length > 0 
     ? (heroMetrics.triageTimes.reduce((a, b) => a + b, 0) / heroMetrics.triageTimes.length).toFixed(2)
     : '0.00';
+
+  const resolveIncident = async (incidentId) => {
+    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
+    try {
+      const response = await fetch(`${apiBase}/api/v1/incidents/${incidentId}/resolve`, { method: 'POST' });
+      if (!response.ok) throw new Error("Failed to resolve");
+    } catch (error) {
+      console.error("Resolve failed:", error);
+      alert("Failed to resolve incident.");
+    }
+  };
 
   const goldenHourRate = heroMetrics.criticalIncidents > 0 
     ? Math.round((heroMetrics.successfulGoldenHours / heroMetrics.criticalIncidents) * 100)
@@ -311,7 +352,7 @@ function App() {
           <MapView incidents={incidents} resources={resources} />
           <div className="flex-1 min-h-0 flex gap-4">
             <div className="flex-1">
-              <PriorityQueue incidents={incidents} />
+              <PriorityQueue incidents={incidents} onResolve={resolveIncident} />
             </div>
             <div className="w-1/3">
               <SimulatorConsole />

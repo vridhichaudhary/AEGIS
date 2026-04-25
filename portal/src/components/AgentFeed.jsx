@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Bell, BellOff, Terminal } from 'lucide-react';
 
 const ValidationPanel = ({ data }) => {
+
   const { authenticity_score, reasoning, recommended_action } = data;
   let colorClass = 'text-green-400 border-green-500/30';
   if (authenticity_score < 40) colorClass = 'text-red-500 border-red-500/30';
@@ -21,6 +22,27 @@ const ValidationPanel = ({ data }) => {
            <li key={i} className="text-[11px] text-gray-400 leading-snug">{r}</li>
          ))}
        </ul>
+    </div>
+  );
+};
+
+const DuplicatePanel = ({ data }) => {
+  const { duplicate_of, duplicate_confidence, reasoning } = data;
+  const pct = Math.round((duplicate_confidence || 0) * 100);
+  const shortId = duplicate_of ? duplicate_of.slice(0, 8) : '???';
+  return (
+    <div className="mt-2 p-3 rounded-lg border border-amber-500/40 bg-amber-900/10">
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="text-amber-400 text-lg">⚠</span>
+        <span className="text-xs font-bold text-amber-300 uppercase tracking-wider">Duplicate Suppressed</span>
+        <span className="ml-auto text-[10px] font-mono font-bold text-amber-400 bg-amber-900/40 px-2 py-0.5 rounded border border-amber-500/30">{pct}% match</span>
+      </div>
+      <p className="text-[11px] text-amber-200 leading-snug">
+        Merging with incident <span className="font-mono font-bold text-amber-300">#{shortId}…</span> — preventing duplicate dispatch.
+      </p>
+      {reasoning && (
+        <p className="text-[10px] text-amber-400/70 mt-1 leading-snug">{reasoning}</p>
+      )}
     </div>
   );
 };
@@ -54,7 +76,22 @@ const AgentFeed = ({ events = [] }) => {
         return `🚑 Dispatched ${unit} — ${reasoning}.`;
       }
       if (agent === 'deduplication') {
-        return `🔍 Dedup: ${decision}`;
+        const isDup = event.decision?.toLowerCase().includes('duplicate detected');
+        if (isDup) {
+          // Extract confidence from reasoning string or event field
+          const confMatch = (event.reasoning || '').match(/([\d.]+)%/);
+          const confidence = confMatch ? parseFloat(confMatch[1]) / 100 : (event.duplicate_confidence || 0);
+          const dupOf = (event.reasoning || '').match(/incident ([a-f0-9]{8})/)?.[1] || null;
+          return {
+            type: 'duplicate_panel',
+            data: {
+              duplicate_of: dupOf,
+              duplicate_confidence: confidence,
+              reasoning: event.reasoning,
+            },
+          };
+        }
+        return `🔍 Dedup: ${event.decision} — ${event.reasoning || ''}`;
       }
       if (agent === 'validation') {
         try {
@@ -95,8 +132,9 @@ const AgentFeed = ({ events = [] }) => {
   const historyEvents = processedEvents.slice(1, 6);
 
   const renderNarrative = (narrative, isLatest) => {
-    if (typeof narrative === 'object' && narrative.type === 'validation_panel') {
-       return <ValidationPanel data={narrative.data} />;
+    if (typeof narrative === 'object') {
+      if (narrative.type === 'validation_panel') return <ValidationPanel data={narrative.data} />;
+      if (narrative.type === 'duplicate_panel') return <DuplicatePanel data={narrative.data} />;
     }
     return (
       <p className={`${isLatest ? 'text-[15px] font-bold text-white' : 'text-[12px] text-gray-300'} leading-relaxed tracking-wide`}>

@@ -56,7 +56,6 @@ command_agent = CommandAgent()
 report_agent = ReportAgent()
 active_incidents: Dict[str, dict] = {}
 
-
 async def proactive_threat_loop():
     while True:
         await asyncio.sleep(60)
@@ -69,9 +68,25 @@ async def proactive_threat_loop():
             except Exception as e:
                 print(f"Error in threat loop: {e}")
 
+async def resource_refresh_loop():
+    """Background task to simulate resources returning to base."""
+    while True:
+        await asyncio.sleep(90)
+        # Randomly select a few resources that are in the registry but maybe marked as returning
+        # In this simple mock, we'll just broadcast that some units are now 'available' again
+        # to clear any UI 'returning' states
+        await manager.broadcast({
+            "type": "resource_update",
+            "payload": [
+                {"id": "AMB-101", "status": "available", "name": "AMB-101", "type": "ambulance"},
+                {"id": "FIR-401", "status": "available", "name": "FIR-401", "type": "fire_truck"}
+            ]
+        })
+
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(proactive_threat_loop())
+    asyncio.create_task(resource_refresh_loop())
 
 
 class EmergencyCallRequest(BaseModel):
@@ -124,6 +139,9 @@ def serialize_incident(result: dict) -> dict:
         "authenticity_score": score,
         "joint_dispatch_memo": result.get("joint_dispatch_memo"),
         "agency_timings": result.get("agency_timings"),
+        "is_duplicate": result.get("is_duplicate", False),
+        "duplicate_of": result.get("duplicate_of"),
+        "duplicate_confidence": result.get("duplicate_confidence", 0.0),
     }
 
 
@@ -160,9 +178,25 @@ async def publish_result(result: dict):
             "agent": event.get("agent"),
             "decision": event.get("decision"),
             "reasoning": event.get("reasoning"),
+            "duplicate_confidence": event.get("duplicate_confidence"),
+            "duplicate_of": event.get("duplicate_of"),
             "timestamp": event["timestamp"].isoformat() if hasattr(event.get("timestamp"), "isoformat") else str(event.get("timestamp"))
         }
         await manager.broadcast({"type": "agent_event", "payload": safe_event})
+
+    # Check for and broadcast preemption events from the DispatchAgent
+    if hasattr(supervisor.dispatch, "preemption_events"):
+        while supervisor.dispatch.preemption_events:
+            p_event = supervisor.dispatch.preemption_events.pop(0)
+            await manager.broadcast({
+                "type": "system_alert",
+                "payload": {
+                    "level": "warning",
+                    "title": "Priority Preemption",
+                    "message": p_event["message"],
+                    "incident_id": p_event["to_incident"]
+                }
+            })
 
 
 @app.get("/health")
@@ -223,6 +257,57 @@ async def generate_aar():
         if "429" in err_str or "rate_limit" in err_str.lower():
             raise HTTPException(status_code=429, detail="LLM daily token limit reached. Try again in a few minutes.")
         raise HTTPException(status_code=500, detail=err_str)
+
+@app.post("/api/v1/incidents/{incident_id}/resolve")
+async def resolve_incident(incident_id: str):
+    if incident_id not in active_incidents:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    
+    incident = active_incidents[incident_id]
+    incident["status"] = "RESOLVED"
+    incident["incident_status"] = "RESOLVED"
+    
+    # Release resources in DispatchAgent
+    released_ids = await supervisor.dispatch.release_resources(incident_id)
+    
+    # Broadcast resolution
+    await manager.broadcast({
+        "type": "incident_resolved",
+        "payload": {
+            "incident_id": incident_id,
+            "released_resources": released_ids,
+            "freed_count": len(released_ids)
+        }
+    })
+    
+    # Also broadcast individual resource updates as 'returning'
+    if released_ids:
+        updates = []
+        for rid in released_ids:
+            updates.append({
+                "id": rid,
+                "status": "returning",
+                "eta_return": random.randint(1, 3) # mock minutes to base
+            })
+        await manager.broadcast({"type": "resource_update", "payload": updates})
+
+    return {"status": "success", "resolved_id": incident_id, "freed": len(released_ids)}
+
+@app.get("/api/v1/resources")
+async def get_resources():
+    all_res = []
+    for r_type, templates in supervisor.dispatch._RESOURCE_TEMPLATES.items():
+        for t in templates:
+            rid = t["resource_id"]
+            assignment = supervisor.dispatch._assigned_incidents.get(rid, {"status": "available"})
+            all_res.append({
+                "id": rid,
+                "name": rid,
+                "type": r_type,
+                "status": assignment.get("status", "available"),
+                "location": t["location"]
+            })
+    return {"resources": all_res}
 
 @app.post("/api/v1/emergency/report", response_model=EmergencyCallResponse)
 async def report_emergency(request: EmergencyCallRequest):

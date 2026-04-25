@@ -71,7 +71,7 @@ const CoordinationTimeline = ({ timings }) => {
   );
 };
 
-const PriorityQueue = ({ incidents }) => {
+const PriorityQueue = ({ incidents, onResolve }) => {
   const [activeTab, setActiveTab] = useState('ALL');
 
   const agencyFilter = (incident) => {
@@ -263,10 +263,28 @@ const PriorityQueue = ({ incidents }) => {
                   )}
                 </div>
 
-                {incident.golden_hour_at_risk && !isReviewQueue && (
+                {incident.golden_hour_at_risk && !isReviewQueue && incident.incident_status !== 'RESOLVED' && (
                   <div className="relative z-10 w-full bg-red-500/10 text-red-400 border border-red-500/30 px-2 py-1.5 rounded-md text-[10px] font-bold uppercase tracking-widest text-center mt-3 flex items-center justify-center gap-1.5 shadow-sm">
                     <AlertCircle size={12} className="animate-pulse" /> 
                     <span>GOLDEN HOUR AT RISK</span>
+                  </div>
+                )}
+
+                {incident.incident_status !== 'RESOLVED' && !isReviewQueue && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onResolve(incident.incident_id);
+                    }}
+                    className="mt-3 w-full py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 text-[10px] font-bold uppercase tracking-widest rounded border border-gray-700 transition-colors"
+                  >
+                    Mark as Resolved
+                  </button>
+                )}
+
+                {incident.incident_status === 'RESOLVED' && (
+                  <div className="mt-3 w-full py-1.5 bg-green-500/10 text-green-400 text-[10px] font-bold uppercase tracking-widest rounded border border-green-500/30 text-center">
+                    Successfully Resolved
                   </div>
                 )}
               </div>

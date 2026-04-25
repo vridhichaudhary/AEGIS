@@ -37,6 +37,7 @@ class AgentState(TypedDict):
     # Deduplication
     is_duplicate: bool
     duplicate_of: Optional[str]
+    duplicate_confidence: float
     geo_hash: Optional[str]
     semantic_fingerprint: Optional[List[float]]
     
@@ -57,6 +58,7 @@ class AgentState(TypedDict):
     # Dispatch
     assigned_resources: List[dict]
     dispatch_status: str
+    incident_status: Literal["PENDING", "DISPATCHED", "ON_SCENE", "RESOLVED"]
     dispatch_timestamp: Optional[datetime]
     joint_dispatch_memo: Optional[dict]
     agency_timings: Optional[dict]
