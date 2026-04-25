@@ -450,7 +450,25 @@ def serialize_incident(result: dict) -> dict:
 async def publish_result(result: dict):
     """Broadcast incident and resource updates to WebSocket clients"""
     incident_payload = serialize_incident(result)
-    active_incidents[result["incident_id"]] = incident_payload
+    
+    # Handle Deduplication Merging
+    if incident_payload.get("is_duplicate") and incident_payload.get("duplicate_of"):
+        orig_id = incident_payload["duplicate_of"]
+        if orig_id in active_incidents:
+            # Update original incident with incremented merged count
+            orig = active_incidents[orig_id]
+            orig["merged_count"] = orig.get("merged_count", 1) + 1
+            orig["last_merged_at"] = datetime.now().isoformat()
+            
+            # Broadcast update for the ORIGINAL incident (the one being called again)
+            await manager.broadcast({"type": "incident_update", "payload": orig})
+            
+            # Also store the duplicate record (optional, but keep for history)
+            active_incidents[result["incident_id"]] = incident_payload
+    else:
+        # Standard incident
+        incident_payload["merged_count"] = 1
+        active_incidents[result["incident_id"]] = incident_payload
     
     # Handle callback queue logic
     if incident_payload.get("requires_callback"):
@@ -469,8 +487,9 @@ async def publish_result(result: dict):
             CALLBACK_METRICS["total_pending"] += 1
             await manager.broadcast({"type": "callback_update", "payload": callback_entry})
 
-    # Broadcast incident update
+    # Broadcast current incident update
     await manager.broadcast({"type": "incident_update", "payload": incident_payload})
+
     
     # Broadcast resource updates with full details
     resources_to_broadcast = []
@@ -704,19 +723,19 @@ async def get_hospitals():
 
 @app.get("/api/v1/resources")
 async def get_resources():
-    all_res = []
-    for r_type, templates in supervisor.dispatch._RESOURCE_TEMPLATES.items():
-        for t in templates:
-            rid = t["resource_id"]
-            assignment = supervisor.dispatch._assigned_incidents.get(rid, {"status": "available"})
-            all_res.append({
-                "id": rid,
-                "name": rid,
-                "type": r_type,
-                "status": assignment.get("status", "available"),
-                "location": t["location"]
-            })
-    return {"resources": all_res}
+    from state.hospitals import get_fleet_status, RESOURCE_DEPOTS
+    fleet = get_fleet_status()
+    # Also expose all depot locations for map markers
+    depots = [
+        {
+            "id": d["id"], "name": d["name"], "type": d["type"],
+            "lat": d["lat"], "lng": d["lng"],
+            "resources": d["resources"], "available": d["available"]
+        }
+        for d in RESOURCE_DEPOTS
+    ]
+    return {"resources": fleet, "depots": depots}
+
 
 @app.get("/api/v1/incidents/history")
 async def get_incident_history(limit: int = 50):

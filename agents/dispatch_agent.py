@@ -15,10 +15,10 @@ from pydantic import BaseModel, Field
 from config.settings import settings
 from state.hospitals import HOSPITALS, haversine_distance
 
-try:
-    import redis
-except ImportError:  # pragma: no cover
-    redis = None
+from state.hospitals import (
+    HOSPITALS, haversine_distance, find_nearest_available,
+    assign_unit, release_units, get_fleet_status, compute_eta
+)
 
 class JointDispatchMemo(BaseModel):
     police_instructions: str = Field(description="Instructions for Police (100) or 'None'")
@@ -27,190 +27,78 @@ class JointDispatchMemo(BaseModel):
     unified_incident_commander: str = Field(description="Agency taking the lead: POLICE, FIRE, or MEDICAL")
 
 class DispatchAgent(BaseAgent):
-    """Dispatches safely using OSRM road-network routing for real-time ETAs."""
+    """Dispatches nearest available resources using Haversine distance + real ETA."""
 
-    RESOURCE_DEPOTS = {
-        "ambulance": {"lat": 28.6328, "lng": 77.2197, "name": "AIIMS Emergency Base"},
-        "ambulance_cardiac": {"lat": 28.6328, "lng": 77.2197, "name": "AIIMS Emergency Base"},
-        "ambulance_trauma": {"lat": 28.6328, "lng": 77.2197, "name": "AIIMS Emergency Base"},
-        "fire_truck": {"lat": 28.6562, "lng": 77.2410, "name": "Delhi Fire Station North"},
-        "fire_truck_rescue": {"lat": 28.6562, "lng": 77.2410, "name": "Delhi Fire Station North"},
-        "police": {"lat": 28.6139, "lng": 77.2090, "name": "Delhi Police HQ"},
-        "rescue_team": {"lat": 28.5672, "lng": 77.3210, "name": "NDRF Base Camp"},
-    }
-
-    # Resource templates
-    _RESOURCE_TEMPLATES = {
-        "ambulance": [
-            {"resource_id": "AMB-101", "location": "AIIMS Emergency Base"},
-            {"resource_id": "AMB-102", "location": "AIIMS Emergency Base"},
-            {"resource_id": "AMB-103", "location": "AIIMS Emergency Base"},
-        ],
-        "ambulance_cardiac": [
-            {"resource_id": "CARD-201", "location": "AIIMS Emergency Base"},
-            {"resource_id": "CARD-202", "location": "AIIMS Emergency Base"},
-        ],
-        "ambulance_trauma": [
-            {"resource_id": "TRM-301", "location": "AIIMS Emergency Base"},
-            {"resource_id": "TRM-302", "location": "AIIMS Emergency Base"},
-        ],
-        "fire_truck": [
-            {"resource_id": "FIR-401", "location": "Delhi Fire Station North"},
-            {"resource_id": "FIR-402", "location": "Delhi Fire Station North"},
-        ],
-        "fire_truck_rescue": [
-            {"resource_id": "FIR-451", "location": "Delhi Fire Station North"},
-            {"resource_id": "FIR-452", "location": "Delhi Fire Station North"},
-        ],
-        "police": [
-            {"resource_id": "POL-501", "location": "Delhi Police HQ"},
-            {"resource_id": "POL-502", "location": "Delhi Police HQ"},
-        ],
-        "rescue_team": [
-            {"resource_id": "RSC-601", "location": "NDRF Base Camp"},
-            {"resource_id": "RSC-602", "location": "NDRF Base Camp"},
-        ],
-    }
-    
-    _assigned_incidents: Dict[str, dict] = {} 
+    _assigned_incidents: Dict[str, dict] = {}
     preemption_events: List[dict] = []
 
     def __init__(self):
         super().__init__(temperature=0)
         self.parser = JsonOutputParser(pydantic_object=JointDispatchMemo)
 
-    async def get_osrm_eta(self, origin_lat: float, origin_lng: float, dest_lat: float, dest_lng: float) -> dict:
-        """Real road-network routing using OSRM Public API."""
-        url = f"http://router.project-osrm.org/route/v1/driving/{origin_lng},{origin_lat};{dest_lng},{dest_lat}?overview=full&geometries=geojson"
+    def haversine_km(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        return haversine_distance(lat1, lon1, lat2, lon2)
+
+    async def get_osrm_eta(self, origin_lat, origin_lng, dest_lat, dest_lng):
+        """Try OSRM; fall back to Haversine."""
+        url = (f"http://router.project-osrm.org/route/v1/driving/"
+               f"{origin_lng},{origin_lat};{dest_lng},{dest_lat}?overview=false")
         try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=5.0)) as session:
-                async with session.get(url) as resp:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=4.0)) as s:
+                async with s.get(url) as resp:
                     if resp.status == 200:
                         data = await resp.json()
-                        if data.get('routes'):
-                            route = data['routes'][0]
+                        if data.get("routes"):
+                            r = data["routes"][0]
                             return {
-                                "duration_minutes": round(route['duration'] / 60, 1),
-                                "distance_km": round(route['distance'] / 1000, 1),
-                                "route_geometry": route['geometry']['coordinates'],
-                                "route_name": route.get('name', 'Main Road')
+                                "duration_minutes": round(r["duration"] / 60, 1),
+                                "distance_km": round(r["distance"] / 1000, 1),
+                                "route_geometry": [],
+                                "route_name": "OSRM Road Network",
                             }
         except Exception:
             pass
-
-        # Fallback: Haversine distance / 30 km/h urban speed estimate
-        dist = self.haversine_km(origin_lat, origin_lng, dest_lat, dest_lng)
-        eta = (dist / 30.0) * 60.0 # minutes
+        dist = haversine_distance(origin_lat, origin_lng, dest_lat, dest_lng)
         return {
-            "duration_minutes": round(eta, 1),
-            "distance_km": round(dist, 1),
+            "duration_minutes": round((dist / 35) * 60, 1),
+            "distance_km": round(dist, 2),
             "route_geometry": [[origin_lng, origin_lat], [dest_lng, dest_lat]],
-            "route_name": "Calculated (Heuristic)"
-        }
-
-    def haversine_km(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        R = 6371.0
-        dlat = math.radians(lat2 - lat1)
-        dlon = math.radians(lon2 - lon1)
-        a = math.sin(dlat / 2)**2 + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2)**2
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
-        return R * c
-
-    async def query_available_resources(self, resource_type: str) -> List[Dict]:
-        templates = self._RESOURCE_TEMPLATES.get(resource_type, [])
-        return [
-            {**t, "status": "available"}
-            for t in templates
-            if t["resource_id"] not in self._assigned_incidents or self._assigned_incidents[t["resource_id"]].get("status") == "available"
-        ]
-
-    async def assign_resource(self, resource_id: str, incident_id: str, priority: str, status: str = "dispatched"):
-        self._assigned_incidents[resource_id] = {
-            "incident_id": incident_id,
-            "priority": priority,
-            "status": status,
-            "timestamp": datetime.now().isoformat()
+            "route_name": "Haversine Estimate",
         }
 
     async def release_resources(self, incident_id: str) -> List[str]:
-        released = []
-        for rid, assignment in list(self._assigned_incidents.items()):
-            if assignment.get("incident_id") == incident_id:
-                del self._assigned_incidents[rid]
-                released.append(rid)
-        return released
+        return release_units(incident_id)
 
     async def allocate_resources(self, incident_id: str, priority: str, requirements: List[dict], location: dict) -> List[dict]:
         assigned = []
-        priority_map = {"P1": 1, "P2": 2, "P3": 3, "P4": 4, "P5": 5}
-        current_p_val = priority_map.get(priority, 3)
-        
         dest_lat = location.get("latitude")
         dest_lng = location.get("longitude")
+        if not dest_lat or not dest_lng:
+            return assigned
 
         for req in requirements:
             r_type = req["type"]
             quantity = req.get("quantity", 1)
-            
-            # Get depot for this type
-            depot = self.RESOURCE_DEPOTS.get(r_type, {"lat": 28.6139, "lng": 77.2090})
-            
-            available = await self.query_available_resources(r_type)
-            to_assign = available[: min(quantity, len(available))]
-            
-            for res in to_assign:
-                routing = await self.get_osrm_eta(depot["lat"], depot["lng"], dest_lat, dest_lng) if dest_lat and dest_lng else None
-                
-                await self.assign_resource(res["resource_id"], incident_id, priority)
+            candidates = find_nearest_available(r_type, dest_lat, dest_lng)
+            to_assign = candidates[:min(quantity, len(candidates))]
+            for unit in to_assign:
+                assign_unit(unit["resource_id"], incident_id, priority)
+                self._assigned_incidents[unit["resource_id"]] = {"incident_id": incident_id, "priority": priority, "status": "dispatched"}
                 assigned.append({
-                    "resource_id": res["resource_id"],
+                    "resource_id": unit["resource_id"],
                     "resource_type": r_type,
-                    "eta_minutes": routing["duration_minutes"] if routing else 8.5,
-                    "distance_km": routing["distance_km"] if routing else 4.0,
-                    "route_geometry": routing["route_geometry"] if routing else [],
-                    "route_name": routing["route_name"] if routing else "N/A",
-                    "gps_accurate": bool(routing and dest_lat),
-                    "status": "dispatched"
+                    "eta_minutes": unit["eta_minutes"],
+                    "distance_km": unit["distance_km"],
+                    "depot_name": unit["depot_name"],
+                    "depot_lat": unit["depot_lat"],
+                    "depot_lng": unit["depot_lng"],
+                    "route_geometry": [[unit["depot_lng"], unit["depot_lat"]], [dest_lng, dest_lat]],
+                    "route_name": f"From {unit['depot_name']}",
+                    "gps_accurate": True,
+                    "status": "dispatched",
                 })
-                quantity -= 1
-
-            if quantity > 0:
-                templates = self._RESOURCE_TEMPLATES.get(r_type, [])
-                for t in templates:
-                    rid = t["resource_id"]
-                    if rid in self._assigned_incidents:
-                        assignment = self._assigned_incidents[rid]
-                        other_p_val = priority_map.get(assignment["priority"], 3)
-                        
-                        if other_p_val >= current_p_val + 2:
-                            routing = await self.get_osrm_eta(depot["lat"], depot["lng"], dest_lat, dest_lng) if dest_lat and dest_lng else None
-                            
-                            await self.assign_resource(rid, incident_id, priority)
-                            assigned.append({
-                                "resource_id": rid,
-                                "resource_type": r_type,
-                                "eta_minutes": routing["duration_minutes"] if routing else 8.5,
-                                "distance_km": routing["distance_km"] if routing else 4.0,
-                                "route_geometry": routing["route_geometry"] if routing else [],
-                                "route_name": routing["route_name"] if routing else "N/A",
-                                "gps_accurate": bool(routing and dest_lat),
-                                "preempted": True,
-                                "from_incident": assignment["incident_id"],
-                                "status": "dispatched"
-                            })
-                            
-                            self.preemption_events.append({
-                                "type": "preemption",
-                                "resource_id": rid,
-                                "from_incident": assignment["incident_id"],
-                                "to_incident": incident_id,
-                                "message": f"Resource {rid} recalled from incident #{assignment['incident_id'][:8]} for critical incident #{incident_id[:8]}"
-                            })
-                            
-                            quantity -= 1
-                            if quantity <= 0:
-                                break
         return assigned
+
 
     async def process(self, state: dict) -> dict:
         requirements = state["resource_requirements"]

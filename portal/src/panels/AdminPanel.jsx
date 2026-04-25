@@ -20,6 +20,7 @@ const StatBadge = ({ icon: Icon, label, value, color = '#2C7A7B' }) => (
 const AdminPanel = ({
   incidents = [],
   resources = [],
+  depots = [],
   agentEvents = [],
   hospitals = [],
   mapFocus,
@@ -28,11 +29,12 @@ const AdminPanel = ({
   onFocusIncident,
 }) => {
   const activeIncidents = incidents.filter(i => i.status !== 'RESOLVED');
-  const duplicates = incidents.filter(i => i.dispatch_status === 'merged_duplicate');
+  const duplicates = incidents.filter(i => i.is_duplicate);
+  const totalMerged = incidents.reduce((acc, inc) => acc + (inc.merged_count || 1) - 1, 0);
   const availableResources = resources.filter(r => r.status === 'available').length;
 
   return (
-    <div className="admin-panel">
+    <div className="admin-panel animate-fade-in">
       {/* Top Bar */}
       <div className={`admin-topbar ${mciActive ? 'mci-active' : ''}`}>
         <div className="admin-topbar-brand">
@@ -41,22 +43,22 @@ const AdminPanel = ({
           </div>
           <div>
             <div className="admin-brand-name">AEGIS <span>Command</span></div>
-            <div className="admin-brand-sub">Emergency Dispatch Control • Delhi NCR</div>
+            <div className="admin-brand-sub">Smart City Emergency Dispatch • Delhi NCR</div>
           </div>
           {mciActive && (
-            <div className="mci-alert-badge">
+            <div className="mci-alert-badge animate-pulse">
               <AlertTriangle size={14} /> MCI ACTIVE
             </div>
           )}
         </div>
 
         <div className="admin-stats-row">
-          <StatBadge icon={Activity} label="Active" value={activeIncidents.length} color="#C53030" />
-          <StatBadge icon={Radio} label="Merged" value={duplicates.length} color="#B7791F" />
-          <StatBadge icon={Users} label="Available" value={availableResources} color="#2F855A" />
-          <StatBadge icon={Zap} label="Status" value={
+          <StatBadge icon={Activity} label="Active Sites" value={activeIncidents.length} color="#E53E3E" />
+          <StatBadge icon={Radio} label="Duplicates" value={totalMerged} color="#D69E2E" />
+          <StatBadge icon={Users} label="Available" value={`${availableResources}/${resources.length}`} color="#38A169" />
+          <StatBadge icon={Zap} label="System" value={
             <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span className="status-dot status-dot-online" />Online
+              <span className="status-dot status-dot-online" />Live
             </span>
           } />
         </div>
@@ -65,13 +67,13 @@ const AdminPanel = ({
       {/* Main Grid */}
       <div className="admin-grid">
         {/* TOP LEFT — Tactical Map */}
-        <div className="admin-card admin-map-card">
+        <div className="admin-card admin-map-card overflow-hidden">
           <div className="admin-card-header">
             <span>🗺️ Tactical Response Map</span>
-            <span className="admin-card-count">{activeIncidents.length} active</span>
+            <span className="admin-card-count">{activeIncidents.length} incidents</span>
           </div>
-          <div className="admin-map-container">
-            <MapView incidents={incidents} resources={resources} focusOn={mapFocus} />
+          <div className="admin-map-container h-full">
+            <MapView incidents={incidents} resources={resources} depots={depots} focusOn={mapFocus} />
           </div>
         </div>
 
@@ -84,36 +86,31 @@ const AdminPanel = ({
           />
         </div>
 
-        {/* BOTTOM LEFT — Agent Trail + Input Console */}
+        {/* BOTTOM LEFT — Agent Decision Feed */}
         <div className="admin-card admin-agent-card">
           <div className="admin-card-header">
-            <span>🤖 AI Agent Intelligence Trail</span>
+            <span>🤖 AI Agent Decision Feed</span>
             {agentEvents.length > 0 && (
               <span className="admin-card-count">{agentEvents.length} events</span>
             )}
           </div>
-          <div className="admin-agent-split">
-            <div className="admin-simulator">
-              <SimulatorConsole />
-            </div>
-            <div className="admin-feed">
-              <AgentFeed events={agentEvents} />
-            </div>
+          <div className="admin-feed-container h-full overflow-y-auto">
+            <AgentFeed events={agentEvents} />
           </div>
         </div>
 
-        {/* BOTTOM RIGHT — Resources + Hospitals */}
+        {/* BOTTOM RIGHT — Resources & Hospitals */}
         <div className="admin-card admin-resource-card">
           <div className="admin-card-header">
-            <span>🚑 Resources & Hospitals</span>
+            <span>🚑 Smart City Resources</span>
           </div>
           <div className="admin-resource-split">
             <div className="admin-resource-section">
-              <div className="admin-section-label">Fleet Status</div>
+              <div className="admin-section-label">Active Fleet</div>
               <ResourceGrid resources={resources} />
             </div>
             <div className="admin-hospital-section">
-              <div className="admin-section-label">Hospital Capacity</div>
+              <div className="admin-section-label">Medical Capacity</div>
               <HospitalStatusPanel hospitals={hospitals} />
             </div>
           </div>
@@ -122,5 +119,6 @@ const AdminPanel = ({
     </div>
   );
 };
+
 
 export default AdminPanel;

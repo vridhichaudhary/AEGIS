@@ -12,18 +12,15 @@ function App() {
   // Shared state
   const [incidents, setIncidents] = useState([]);
   const [resources, setResources] = useState([]);
+  const [depots, setDepots] = useState([]);
   const [agentEvents, setAgentEvents] = useState([]);
   const [hospitals, setHospitals] = useState([]);
   const [mciState, setMciState] = useState({ active: false });
   const [reportData, setReportData] = useState(null);
   const [mapFocus, setMapFocus] = useState(null);
-  const [wsStatus, setWsStatus] = useState('connecting'); // 'connecting' | 'connected' | 'reconnecting'
-
-  // Latest incident for citizen panel (most recent non-resolved)
-  const latestIncident = incidents.find(i => i.status !== 'RESOLVED') || null;
+  const [wsStatus, setWsStatus] = useState('connecting');
 
   useEffect(() => {
-    // Load initial data
     const load = async () => {
       try {
         const [resData, hospData] = await Promise.all([
@@ -31,14 +28,14 @@ function App() {
           fetch(`${API_BASE}/api/v1/hospitals`).then(r => r.json()),
         ]);
         setResources(resData.resources || []);
+        setDepots(resData.depots || []);
         setHospitals(hospData.hospitals || []);
       } catch (e) {
-        console.warn('Initial data load failed (backend may be waking up):', e.message);
+        console.warn('Backend waking up...', e.message);
       }
     };
     load();
 
-    // WebSocket with reconnection
     const ws = connectWebSocket((event) => {
       setWsStatus('connected');
       let data;
@@ -47,20 +44,24 @@ function App() {
       if (data.type === 'incident_update') {
         const inc = data.payload;
         setIncidents(prev => {
-          const filtered = prev.filter(i => i.incident_id !== inc.incident_id);
-          return [inc, ...filtered];
+          const others = prev.filter(i => i.incident_id !== inc.incident_id);
+          return [inc, ...others];
         });
       } else if (data.type === 'agent_event') {
-        setAgentEvents(prev => [data.payload, ...prev].slice(0, 50));
+        setAgentEvents(prev => [data.payload, ...prev].slice(0, 30));
+      } else if (data.type === 'resource_update') {
+        // Full fleet update
+        if (Array.isArray(data.payload)) {
+          setResources(data.payload);
+        }
       } else if (data.type === 'mci_activation') {
         setMciState({ active: true, zone: data.payload.zone, details: data.payload.details });
       } else if (data.type === 'mci_resolved') {
         setMciState({ active: false });
         if (data.payload.aar_report) setReportData(data.payload.aar_report);
-      } else if (data.type === 'resource_update') {
-        if (data.payload?.resources) setResources(data.payload.resources);
       }
     });
+
 
     return () => ws.close();
   }, []);
@@ -121,11 +122,12 @@ function App() {
       {/* Panel Content */}
       <div className="panel-content">
         {activePanel === 'citizen' ? (
-          <CitizenPanel latestCitizenIncident={latestIncident} />
+          <CitizenPanel latestCitizenIncident={incidents.find(i => i.status !== 'RESOLVED')} />
         ) : (
           <AdminPanel
             incidents={incidents}
             resources={resources}
+            depots={depots}
             agentEvents={agentEvents}
             hospitals={hospitals}
             mapFocus={mapFocus}
@@ -135,6 +137,7 @@ function App() {
           />
         )}
       </div>
+
 
       <AARModal data={reportData} onClose={() => setReportData(null)} />
     </div>
