@@ -17,20 +17,50 @@ const defaultWebSocketUrl = () => {
   return `${protocol}//${host}/ws`;
 };
 
-export const connectWebSocket = (url = defaultWebSocketUrl()) => {
-  const ws = new WebSocket(url);
+export const connectWebSocket = (onMessage, url = defaultWebSocketUrl()) => {
+  let ws;
+  let retryCount = 0;
+  const maxRetries = 10;
+  
+  const connect = () => {
+    // Add timestamp to bypass any handshake caching
+    const socketUrl = `${url}${url.includes('?') ? '&' : '?'}v=${Date.now()}`;
+    ws = new WebSocket(socketUrl);
 
-  ws.onopen = () => {
-    console.log('Connected to WebSocket:', url);
+    ws.onopen = () => {
+      console.log('Connected to WebSocket:', socketUrl);
+      retryCount = 0;
+    };
+
+    ws.onmessage = (event) => {
+      if (onMessage) onMessage(event);
+    };
+
+    ws.onerror = (err) => {
+      console.error('WebSocket Error:', err);
+    };
+
+    ws.onclose = () => {
+      console.log('WebSocket disconnected.');
+      if (retryCount < maxRetries) {
+        const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
+        console.log(`Retrying connection in ${delay/1000}s... (Attempt ${retryCount + 1}/${maxRetries})`);
+        setTimeout(connect, delay);
+        retryCount++;
+      } else {
+        console.error('Max WebSocket reconnections reached.');
+      }
+    };
   };
 
-  ws.onerror = () => {
-    // Suppress generic error logging since StrictMode unmounts intentionally cause this
-  };
+  connect();
 
-  ws.onclose = () => {
-    console.log('Disconnected from WebSocket:', url);
+  return {
+    close: () => {
+      if (ws) {
+        ws.onclose = null; // Prevent reconnection on intentional close
+        ws.close();
+      }
+    }
   };
-
-  return ws;
 };

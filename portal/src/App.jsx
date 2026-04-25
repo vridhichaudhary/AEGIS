@@ -68,8 +68,7 @@ function App() {
     
     loadData();
 
-    const ws = connectWebSocket();
-    ws.onmessage = (event) => {
+    const ws = connectWebSocket((event) => {
       const data = JSON.parse(event.data);
       
       if (data.type === 'incident_update') {
@@ -99,7 +98,7 @@ function App() {
         setIsDemoRunning(false);
         setDemoStep(null);
       }
-    };
+    });
 
     return () => ws.close();
   }, []);
