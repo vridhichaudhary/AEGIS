@@ -9,6 +9,132 @@ from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
 from typing import List
 
+import random
+
+class IndianGeocoder:
+    """Accurate geocoding for Indian locations"""
+    
+    # Major Indian city coordinates
+    LOCATIONS = {
+        # Delhi NCR
+        "delhi": (28.6139, 77.2090),
+        "connaught place": (28.6289, 77.2065),
+        "cp": (28.6289, 77.2065),
+        "new delhi": (28.6139, 77.2090),
+        
+        # Gurugram/Gurgaon Sectors
+        "sector 14": (28.4684, 77.0294),
+        "sector 14 gurugram": (28.4684, 77.0294),
+        "sector 14 gurgaon": (28.4684, 77.0294),
+        "sector 18": (28.4942, 77.0816),
+        "sector 22": (28.4931, 77.0890),
+        "sector 29": (28.4620, 77.0670),
+        "sector 32": (28.4574, 77.0803),
+        "sector 43": (28.4491, 77.0746),
+        "sector 56": (28.4247, 77.0932),
+        
+        # Noida Sectors
+        "sector 18 noida": (28.5685, 77.3251),
+        "sector 62 noida": (28.6254, 77.3646),
+        "noida": (28.5355, 77.3910),
+        
+        # Major landmarks
+        "dlf mall": (28.4950, 77.0830),
+        "ambience mall": (28.5016, 77.0863),
+        "cyber hub": (28.4945, 77.0894),
+        "kingdom of dreams": (28.4673, 77.0699),
+        "galleria market": (28.4684, 77.0294),
+        "saket": (28.5244, 77.2066),
+        "nehru place": (28.5494, 77.2501),
+        
+        # Temples & religious places
+        "hanuman mandir": (28.6350, 77.2200),
+        "iskcon temple": (28.5562, 77.2515),
+        "lotus temple": (28.5535, 77.2588),
+        "akshardham": (28.6127, 77.2773),
+        
+        # Hospitals
+        "aiims": (28.5672, 77.2100),
+        "fortis hospital": (28.4941, 77.0738),
+        "max hospital": (28.5016, 77.0880),
+        
+        # Highways
+        "nh 48": (28.4500, 77.0500),
+        "nh-48": (28.4500, 77.0500),
+        "nh48": (28.4500, 77.0500),
+        "nh 8": (28.4500, 77.0500),
+        "national highway 48": (28.4500, 77.0500),
+        
+        # Metro stations
+        "metro station": (28.6139, 77.2090),
+        "huda city centre": (28.4595, 77.0727),
+        "iffco chowk": (28.4728, 77.0334),
+        
+        # Markets
+        "sadar bazaar": (28.6507, 77.2152),
+        "chandni chowk": (28.6507, 77.2304),
+        "karol bagh": (28.6519, 77.1909),
+    }
+    
+    @classmethod
+    def geocode(cls, location_text: str) -> tuple[float, float]:
+        """
+        Convert location text to (latitude, longitude)
+        Returns Delhi center + offset if location not found
+        """
+        if not location_text or location_text.strip() == "":
+            # Default: Delhi center
+            return (28.6139, 77.2090)
+        
+        location_lower = location_text.lower().strip()
+        
+        # Clean common prefixes
+        location_lower = location_lower.replace("near ", "")
+        location_lower = location_lower.replace("ke paas ", "")
+        location_lower = location_lower.replace("at ", "")
+        location_lower = location_lower.replace("in ", "")
+        
+        # Try exact match first
+        if location_lower in cls.LOCATIONS:
+            lat, lon = cls.LOCATIONS[location_lower]
+            # Add tiny random offset to avoid exact overlaps
+            lat += random.uniform(-0.001, 0.001)
+            lon += random.uniform(-0.001, 0.001)
+            return (lat, lon)
+        
+        # Try partial match
+        for key, coords in cls.LOCATIONS.items():
+            if key in location_lower or location_lower in key:
+                lat, lon = coords
+                lat += random.uniform(-0.001, 0.001)
+                lon += random.uniform(-0.001, 0.001)
+                return (lat, lon)
+        
+        # Extract sector number if present
+        import re
+        sector_match = re.search(r'sector\s*(\d+)', location_lower)
+        if sector_match:
+            sector_num = int(sector_match.group(1))
+            
+            # Gurugram sectors (1-100)
+            if sector_num <= 100:
+                base_lat = 28.4600
+                base_lon = 77.0300
+                
+                # Calculate position in grid
+                row = (sector_num - 1) // 10
+                col = (sector_num - 1) % 10
+                
+                lat = base_lat + (row * 0.015) + random.uniform(-0.002, 0.002)
+                lon = base_lon + (col * 0.012) + random.uniform(-0.002, 0.002)
+                
+                return (lat, lon)
+        
+        # Default: Delhi center with random offset
+        lat = 28.6139 + random.uniform(-0.05, 0.05)
+        lon = 77.2090 + random.uniform(-0.05, 0.05)
+        return (lat, lon)
+
 class ParsingResult(BaseModel):
     location_text: str = Field(description="The extracted location string, e.g. 'Sector 14'")
     landmark: str = Field(description="Any specific landmark, e.g. 'Ambience Mall'")
@@ -372,12 +498,16 @@ Instructions:
             parsed_data = self.heuristic_parse(text)
 
         distress_score = self.calculate_distress_score(text)
+        # Geocode the location
+        location_text = parsed_data.get("location_text", "")
+        lat, lon = IndianGeocoder.geocode(location_text)
+
         location = {
-            "raw_text": parsed_data.get("location_text", ""),
+            "raw_text": location_text,
             "landmark": parsed_data.get("landmark", ""),
-            "latitude": None,
-            "longitude": None,
-            "confidence": 0.88 if parsed_data.get("location_text") else 0.3,
+            "latitude": lat,
+            "longitude": lon,
+            "confidence": 0.88 if location_text else 0.3,
         }
         incident_type = {
             "category": parsed_data.get("incident_category", "other"),

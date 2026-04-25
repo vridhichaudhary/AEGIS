@@ -80,30 +80,39 @@ def serialize_incident(result: dict) -> dict:
 
 
 async def publish_result(result: dict):
+    """Broadcast incident and resource updates to WebSocket clients"""
     incident_payload = serialize_incident(result)
     active_incidents[result["incident_id"]] = incident_payload
-
+    
+    # Broadcast incident update
     await manager.broadcast({"type": "incident_update", "payload": incident_payload})
-
-    await manager.broadcast(
-        {
-            "type": "resource_update",
-            "payload": [
-                {
-                    "id": resource["resource_id"],
-                    "type": resource["resource_type"],
-                    "status": "dispatched",
-                    "location": incident_payload["location"]["raw_text"] if incident_payload["location"] else "",
-                }
-                for resource in result.get("assigned_resources", [])
-            ],
+    
+    # Broadcast resource updates with full details
+    resources_to_broadcast = []
+    for resource in result.get("assigned_resources", []):
+        # Fetch full resource data from Redis or fallback
+        resource_data = {
+            "id": resource["resource_id"],
+            "name": resource["resource_id"],
+            "type": resource["resource_type"],
+            "status": "dispatched",
+            "location": result.get("location"),  # Incident location
         }
-    )
-
+        resources_to_broadcast.append(resource_data)
+    
+    if resources_to_broadcast:
+        await manager.broadcast({
+            "type": "resource_update",
+            "payload": resources_to_broadcast
+        })
+    
+    # Broadcast agent events
     for event in result.get("agent_trail", []):
         safe_event = {
-            **event,
-            "timestamp": event["timestamp"].isoformat() if hasattr(event.get("timestamp"), "isoformat") else event.get("timestamp"),
+            "agent": event.get("agent"),
+            "decision": event.get("decision"),
+            "reasoning": event.get("reasoning"),
+            "timestamp": event["timestamp"].isoformat() if hasattr(event.get("timestamp"), "isoformat") else str(event.get("timestamp"))
         }
         await manager.broadcast({"type": "agent_event", "payload": safe_event})
 

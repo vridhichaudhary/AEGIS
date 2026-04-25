@@ -20,7 +20,7 @@ const ResourceGrid = ({ resources }) => {
                 <span className={`w-2 h-2 rounded-full ${resource.status === 'dispatched' ? 'bg-yellow-500 animate-pulse' : resource.status === 'on_scene' ? 'bg-green-500' : 'bg-blue-500'}`}></span>
                 <span className="text-xs text-gray-300 capitalize">{resource.status?.replace('_', ' ') || 'Idle'}</span>
               </div>
-              {resource.location && <p className="text-[10px] text-gray-500 mt-2 truncate">📍 {resource.location}</p>}
+              {resource.location && <p className="text-[10px] text-gray-500 mt-2 truncate">📍 {typeof resource.location === 'object' ? resource.location.raw_text : resource.location}</p>}
             </div>
           ))
         )}
