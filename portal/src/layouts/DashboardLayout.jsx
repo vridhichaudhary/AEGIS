@@ -1,44 +1,47 @@
 import React from 'react';
 
 /**
- * Redesigned AEGIS Dashboard Layout
- * TOP BAR: 48px
- * LEFT SIDEBAR: 280px
- * MAIN AREA: Flex column with 60/40 split
+ * AEGIS Clean Production Layout
+ * Pure 2x2 Grid for maximum clarity
  */
 const DashboardLayout = ({ 
   topBar, 
-  sidebar, 
-  mainLeft, 
-  mainRight,
+  topLeft, 
+  topRight, 
+  bottomLeft, 
+  bottomRight,
   extra,
   mciActive = false 
 }) => {
   return (
     <div className={`h-screen w-screen flex flex-col overflow-hidden bg-aegis-bg-base text-aegis-text-primary font-sans`}>
-      {/* TOP BAR (48px) */}
-      <header className={`h-[48px] w-full flex-shrink-0 z-50 border-b border-aegis-border transition-all duration-500 ${mciActive ? 'bg-red-950/90' : 'bg-aegis-bg-base'}`}>
+      {/* TOP BAR (56px for more breathing room) */}
+      <header className={`h-[56px] w-full flex-shrink-0 z-50 border-b border-aegis-border bg-white shadow-sm flex items-center transition-all duration-500 ${mciActive ? 'border-b-red-500 bg-red-50' : ''}`}>
         {topBar}
       </header>
 
-      <div className="flex flex-1 overflow-hidden">
-        {/* LEFT SIDEBAR (280px) */}
-        <aside className={`w-[280px] h-full flex-shrink-0 bg-aegis-bg-surface border-r transition-all duration-500 overflow-hidden flex flex-col ${mciActive ? 'border-r-red-600/50' : 'border-r-aegis-border'}`}>
-          {sidebar}
-        </aside>
+      <div className="flex-1 p-6 overflow-hidden">
+        <div className="grid grid-cols-2 grid-rows-2 gap-6 h-full">
+          {/* TOP LEFT */}
+          <div className="card-flush relative min-h-0">
+            {topLeft}
+          </div>
 
-        {/* MAIN AREA */}
-        <main className="flex-1 flex overflow-hidden">
-          {/* LEFT COLUMN (60%) */}
-          <div className="w-[60%] h-full border-r border-aegis-border overflow-hidden">
-            {mainLeft}
+          {/* TOP RIGHT */}
+          <div className="card-flush relative min-h-0">
+            {topRight}
           </div>
-          
-          {/* RIGHT COLUMN (40%) */}
-          <div className="w-[40%] h-full overflow-y-auto custom-scrollbar flex flex-col gap-4 p-4">
-            {mainRight}
+
+          {/* BOTTOM LEFT */}
+          <div className="card-flush relative min-h-0">
+            {bottomLeft}
           </div>
-        </main>
+
+          {/* BOTTOM RIGHT */}
+          <div className="card-flush relative min-h-0">
+            {bottomRight}
+          </div>
+        </div>
       </div>
 
       {/* OVERLAYS / EXTRA */}

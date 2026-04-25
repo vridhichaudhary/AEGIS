@@ -1,12 +1,10 @@
+@import './styles/design-system.css';
 /* Google Fonts */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-
-/* AEGIS Design System */
-@import './styles/design-system.css';
 
 /* ─── Map animations (keep from original) ─── */
 @keyframes pulse-ring {

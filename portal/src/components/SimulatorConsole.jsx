@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Phone, PhoneCall, Radio, Activity, Mic, UploadCloud, Loader, RefreshCw } from 'lucide-react';
+import { Phone, PhoneCall, Radio, Activity, Mic, UploadCloud, Loader, RefreshCw, AudioWaveform } from 'lucide-react';
 
 const transcripts = [
   "Help, aag lag gayi hai Sector 14 market mein, 3 log fas gaye hain ander!",
@@ -91,99 +91,74 @@ const SimulatorConsole = () => {
     return () => clearTimeout(timeout);
   }, [status, displayedText, currentIndex, callerId, isAudioMode]);
 
-  const handleSampleUpload = async (filename) => {
-    try {
-      setStatus('transcribing');
-      setIsAudioMode(true);
-      const response = await fetch(`${apiBase}/demo_assets/${filename}`);
-      if (!response.ok) throw new Error("Sample not found");
-      const blob = await response.blob();
-      await processAudioFile(new File([blob], filename, { type: 'audio/wav' }));
-    } catch (error) {
-      setDisplayedText("Sample audio file not found.");
-      setStatus('completed');
-      setTimeout(() => { setStatus('idle'); setIsAudioMode(false); }, 2000);
-    }
-  };
-
   return (
-    <div className="card-flush flex flex-col bg-aegis-bg-surface overflow-hidden">
-      <div className="section-header flex justify-between items-center">
-        <div className="flex items-center gap-2">
-          <Radio size={14} className="text-aegis-info" />
-          <span>Live Call Simulator</span>
-        </div>
-        {status !== 'idle' && (
-          <button onClick={() => { setStatus('idle'); setIsAudioMode(false); }} className="text-aegis-info hover:text-white transition-colors">
-            <RefreshCw size={12} />
-          </button>
-        )}
-      </div>
-      
-      <div className="p-3 flex-1 flex flex-col min-h-[140px]">
+    <div className="flex flex-col h-full bg-slate-50 border-b border-slate-100">
+      <div className="px-5 py-4 flex flex-1 flex-col">
         {status !== 'idle' ? (
-          <div className="flex flex-col h-full">
-            <div className="flex justify-between items-start mb-2">
-              <div className="flex flex-col gap-1">
-                <span className="mono text-[10px] text-aegis-text-muted flex items-center gap-1">
-                  <Phone size={10} /> {callerId}
-                </span>
-                {isAudioMode && (status === 'processing' || status === 'completed') && (
-                  <span className="badge badge-purple badge-xs">AUDIO UPLOAD</span>
-                )}
+          <div className="flex flex-col h-full animate-slide-up">
+            <div className="flex justify-between items-center mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-teal-100 flex items-center justify-center text-teal-700 animate-pulse">
+                  <PhoneCall size={20} />
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-sm font-bold text-slate-800">{callerId}</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase">Incoming Call</span>
+                </div>
               </div>
-              <span className={`badge badge-xs animate-pulse ${
-                status === 'incoming' ? 'badge-critical' : 
-                status === 'transcribing' ? 'badge-success' : 
-                'badge-info'
+              <span className={`px-2 py-0.5 rounded text-[10px] font-black tracking-widest ${
+                status === 'incoming' ? 'bg-red-50 text-red-600' : 
+                status === 'transcribing' ? 'bg-teal-50 text-teal-600' : 
+                'bg-blue-50 text-blue-600'
               }`}>
                 {status.toUpperCase()}
               </span>
             </div>
 
-            <div className="flex-1 bg-aegis-bg-base/50 rounded border border-aegis-border p-3 flex flex-col items-center justify-center relative overflow-hidden">
-              {status === 'transcribing' && (
-                <div className="flex items-end gap-0.5 mb-2 h-4 absolute top-2 right-2 opacity-50">
-                  {[...Array(8)].map((_, i) => (
-                    <div key={i} className={`w-1 rounded-t bg-aegis-low animate-pulse`} style={{ height: `${Math.random() * 100}%`, animationDelay: `${i * 0.1}s` }} />
+            <div className="flex-1 bg-white rounded-2xl border border-slate-100 p-5 shadow-sm flex flex-col items-center justify-center relative overflow-hidden">
+               <div className="flex items-end gap-1 mb-4 h-6">
+                  {[...Array(12)].map((_, i) => (
+                    <div 
+                      key={i} 
+                      className={`w-1.5 rounded-full bg-teal-500/20 ${status === 'transcribing' ? 'animate-waveform' : ''}`} 
+                      style={{ height: `${20 + Math.random() * 80}%`, animationDelay: `${i * 0.1}s`, animationDuration: '0.6s' }} 
+                    />
                   ))}
-                </div>
-              )}
-              
-              <p className="text-[12px] text-aegis-text-primary italic leading-relaxed text-center font-medium">
-                {isAudioMode && status === 'transcribing' ? 'Running Whisper transcription...' : `"${displayedText || '...'}"`}
-              </p>
+               </div>
+               <p className="text-sm text-slate-700 italic text-center font-medium leading-relaxed px-4">
+                "{displayedText || '...'}"
+               </p>
             </div>
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center h-full gap-3 py-4">
-             <div className="text-[10px] font-bold text-aegis-text-muted uppercase tracking-[0.2em] animate-pulse">System Standby</div>
-             <button 
-               onClick={() => fileInputRef.current?.click()}
-               className="btn btn-ghost w-full flex flex-col py-3 border-dashed"
-             >
-               <UploadCloud size={16} className="text-aegis-purple mb-1" />
-               <span className="text-[9px] uppercase tracking-widest">Upload Audio Recording</span>
-               <input type="file" className="hidden" ref={fileInputRef} onChange={(e) => processAudioFile(e.target.files[0])} />
-             </button>
+          <div className="flex flex-col items-center justify-center h-full gap-4">
+             <div className="flex flex-col items-center">
+                <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-3">
+                  <AudioWaveform size={24} />
+                </div>
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Pipeline Idle</span>
+             </div>
+             
+             <div className="flex gap-3 w-full max-w-xs">
+                <button 
+                  onClick={() => fileInputRef.current?.click()}
+                  className="flex-1 btn btn-ghost justify-center border-dashed border-2 hover:border-teal-500 hover:text-teal-600 transition-all"
+                >
+                  <UploadCloud size={16} />
+                  <span>Upload</span>
+                </button>
+                <input type="file" className="hidden" ref={fileInputRef} onChange={(e) => processAudioFile(e.target.files[0])} />
+                
+                <button 
+                  onClick={() => setStatus('incoming')}
+                  className="flex-1 btn btn-primary justify-center shadow-lg shadow-teal-700/20"
+                >
+                  <PhoneCall size={16} />
+                  <span>Test Call</span>
+                </button>
+             </div>
           </div>
         )}
-      </div>
-
-      <div className="p-3 border-t border-aegis-border bg-aegis-bg-elevated/30">
-        <span className="text-[9px] font-bold text-aegis-text-muted uppercase tracking-widest mb-2 block">Quick Test Samples</span>
-        <div className="grid grid-cols-3 gap-2">
-          {['Fire', 'Accident', 'Medical'].map(type => (
-            <button 
-              key={type}
-              onClick={() => handleSampleUpload(`${type.toLowerCase()}_emergency.wav`)}
-              disabled={status !== 'idle'}
-              className="btn btn-xs btn-ghost text-[9px]"
-            >
-              {type}
-            </button>
-          ))}
-        </div>
       </div>
     </div>
   );

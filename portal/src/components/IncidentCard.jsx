@@ -58,13 +58,13 @@ const IncidentCard = ({ incident, onClick, onResolve, onAddNote, mViewTimeline, 
   return (
     <>
       <div
-        className={`relative flex flex-col gap-3 p-3 transition-all cursor-pointer group 
-          ${isNew ? 'animate-incident-new' : ''} 
-          ${isResolved ? 'opacity-50 grayscale scale-[0.98]' : 'bg-aegis-bg-surface hover:bg-aegis-bg-elevated'}
+        className={`relative flex flex-col gap-3 p-4 transition-all cursor-pointer group 
+          ${isNew ? 'animate-incident-new ring-2 ring-aegis-accent ring-offset-2' : ''} 
+          ${isResolved ? 'opacity-50 grayscale bg-slate-50' : 'bg-white hover:bg-slate-50'}
           ${isDuplicate ? 'opacity-60' : ''}
-          rounded-r border border-aegis-border border-l-0 shadow-lg mb-2`}
+          rounded-xl border border-slate-200 shadow-sm hover:shadow-md mb-3`}
         style={{
-          borderLeft: `${isMci ? '8px' : '4px'} solid var(--aegis-${incident.priority.toLowerCase()})`,
+          borderLeft: `${isMci ? '8px' : '4px'} solid ${isCritical ? '#C53030' : '#B7791F'}`,
         }}
         onClick={() => !isResolved && onClick(incident)}
         onContextMenu={handleContextMenu}
@@ -72,12 +72,12 @@ const IncidentCard = ({ incident, onClick, onResolve, onAddNote, mViewTimeline, 
         {/* TOP ROW */}
         <div className="flex justify-between items-center gap-2">
           <div className="flex items-center gap-2">
-            <span className={`px-2 py-0.5 rounded-full text-[11px] font-black uppercase tracking-wider bg-aegis-${incident.priority.toLowerCase()}/10 text-aegis-${incident.priority.toLowerCase()} border border-aegis-${incident.priority.toLowerCase()}/30 w-[90px] text-center`}>
+            <span className={`badge badge-${incident.priority.toLowerCase()} min-w-[80px] justify-center`}>
               {incident.priority} {isCritical ? 'CRITICAL' : 'ALERT'}
             </span>
-            <div className="flex items-center gap-1.5 ml-1">
+            <div className="flex items-center gap-2 ml-1">
               <CategoryIcon category={incident.incident_type?.category} />
-              <span className="text-[11px] font-bold text-aegis-text-primary uppercase tracking-wide">
+              <span className="text-xs font-bold text-slate-800 uppercase tracking-tight">
                 {incident.incident_type?.category?.replace('_', ' ') || 'Emergency'}
               </span>
             </div>
@@ -85,53 +85,53 @@ const IncidentCard = ({ incident, onClick, onResolve, onAddNote, mViewTimeline, 
           
           <div className="flex items-center gap-3">
             {isCritical && timeLeft !== null && (
-              <span className={`mono text-[11px] font-bold ${timeLeft < 900000 ? 'text-aegis-critical animate-pulse' : 'text-aegis-medium'}`}>
+              <span className={`mono text-[11px] font-bold ${timeLeft < 900000 ? 'text-red-600 animate-pulse' : 'text-amber-600'}`}>
                 {formatTime(timeLeft)}
               </span>
             )}
-            <span className="mono text-[10px] text-aegis-text-muted">
+            <span className="mono text-[10px] font-bold text-slate-400">
               {incident.timestamp ? Math.floor((new Date() - new Date(incident.timestamp)) / 60000) : 0}m ago
             </span>
           </div>
         </div>
 
         {/* MIDDLE ROW */}
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-start gap-1.5">
-            <MapPin size={12} className="text-aegis-text-muted mt-0.5" />
-            <span className="text-[13px] text-aegis-text-primary font-medium line-clamp-1">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-start gap-2">
+            <MapPin size={14} className="text-slate-400 mt-0.5" />
+            <span className="text-sm text-slate-800 font-semibold line-clamp-1">
               {incident.location?.raw_text || 'Unknown Location'}
             </span>
           </div>
           <div className="flex gap-2">
-            <span className={`px-1.5 py-0 rounded text-[9px] font-bold uppercase tracking-widest border border-aegis-border
-              ${incident.channel === 'whatsapp' ? 'bg-green-500/10 text-green-500 border-green-500/30' : 
-                incident.channel === 'voice' ? 'bg-blue-500/10 text-blue-500 border-blue-500/30' : 
-                'bg-gray-500/10 text-gray-500 border-gray-500/30'}`}>
+            <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-widest border
+              ${incident.channel === 'whatsapp' ? 'bg-green-50 text-green-700 border-green-200' : 
+                incident.channel === 'voice' ? 'bg-blue-50 text-blue-700 border-blue-200' : 
+                'bg-slate-50 text-slate-700 border-slate-200'}`}>
               {incident.channel || '112 Call'}
             </span>
           </div>
         </div>
 
         {/* BOTTOM ROW */}
-        <div className="flex justify-between items-end border-t border-aegis-border/50 pt-2">
+        <div className="flex justify-between items-end border-t border-slate-100 pt-3">
           <div className="flex items-center gap-2">
             {incident.assigned_resources?.slice(0, 3).map((res, i) => (
-              <div key={i} className="flex items-center gap-1 bg-aegis-bg-base/50 px-1.5 py-0.5 rounded border border-aegis-border">
+              <div key={i} className="flex items-center gap-1.5 bg-slate-50 px-2 py-1 rounded-lg border border-slate-100">
                 <ResourceIcon type={res.resource_type} />
-                <span className="text-[9px] mono text-aegis-text-secondary font-bold uppercase">
+                <span className="text-[10px] mono text-slate-600 font-bold uppercase">
                   {res.resource_type.split('_')[0].slice(0, 3)}-{res.resource_type.split('_').pop()}
                 </span>
               </div>
             ))}
             {(incident.assigned_resources?.length || 0) > 3 && (
-              <span className="text-[9px] text-aegis-text-muted mono">+{incident.assigned_resources.length - 3}</span>
+              <span className="text-[10px] text-slate-400 font-bold">+{incident.assigned_resources.length - 3}</span>
             )}
-            {!incident.assigned_resources?.length && <span className="text-[9px] text-aegis-text-muted italic">Awaiting dispatch...</span>}
+            {!incident.assigned_resources?.length && <span className="text-[10px] text-slate-400 italic">Deploying...</span>}
           </div>
 
-          <div className="mono text-[10px] text-aegis-text-secondary font-bold bg-aegis-bg-base/50 px-2 py-0.5 rounded border border-aegis-border">
-            {incident.assigned_resources?.[0]?.eta_minutes ? `${incident.assigned_resources[0].eta_minutes}m · 3.1km` : '--m · --km'}
+          <div className="mono text-[10px] text-slate-500 font-bold bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-100">
+            {incident.assigned_resources?.[0]?.eta_minutes ? `${incident.assigned_resources[0].eta_minutes}m · 3.1km` : '--m'}
           </div>
         </div>
 
