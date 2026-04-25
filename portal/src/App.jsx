@@ -7,6 +7,7 @@ import ResourceGrid from './components/ResourceGrid';
 import SimulatorConsole from './components/SimulatorConsole';
 import ThreatIntelligencePanel from './components/ThreatIntelligencePanel';
 import VoiceCommand from './components/VoiceCommand';
+import AARModal from './components/AARModal';
 import { connectWebSocket } from './utils/websocket';
 
 function App() {
@@ -15,6 +16,8 @@ function App() {
   const [agentEvents, setAgentEvents] = useState([]);
   const [threatIntelligence, setThreatIntelligence] = useState(null);
   const [isLogoGlowing, setIsLogoGlowing] = useState(false);
+  const [isGeneratingReport, setIsGeneratingReport] = useState(false);
+  const [reportData, setReportData] = useState(null);
   const [metrics, setMetrics] = useState({
     active_incidents: 0,
     avg_eta: '-',
@@ -34,6 +37,25 @@ function App() {
   });
   
   const seenIncidents = useRef(new Set());
+
+  const generateAAR = async () => {
+    setIsGeneratingReport(true);
+    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
+    try {
+      const response = await fetch(`${apiBase}/api/v1/report/generate`);
+      if (response.ok) {
+        const data = await response.json();
+        setReportData(data);
+      } else {
+        alert("Failed to generate report. Make sure simulation data is available.");
+      }
+    } catch (error) {
+      console.error("Failed to generate report:", error);
+      alert("Error generating report.");
+    } finally {
+      setIsGeneratingReport(false);
+    }
+  };
 
   const updateMetrics = useCallback((incidentList) => {
     const activeCount = incidentList.filter(i => 
@@ -245,10 +267,17 @@ function App() {
           <div className={`w-10 h-10 bg-gradient-to-br from-blue-500 to-emerald-500 rounded-lg flex items-center justify-center font-bold text-lg shadow-lg transition-all duration-300 ${isLogoGlowing ? 'shadow-[0_0_20px_rgba(56,189,248,0.8)] animate-pulse scale-110' : ''}`}>
             A
           </div>
-          <div>
+          <div className="flex items-center gap-4">
             <h2 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">
               Command Center
             </h2>
+            <button 
+              onClick={generateAAR}
+              disabled={isGeneratingReport}
+              className="bg-gray-800 border border-gray-600 hover:bg-gray-700 text-[10px] text-gray-300 font-bold py-1.5 px-3 rounded shadow transition-colors disabled:opacity-50 uppercase tracking-widest"
+            >
+              {isGeneratingReport ? "GENERATING..." : "GENERATE AAR"}
+            </button>
           </div>
         </div>
         <div className="flex items-center gap-6">
@@ -298,6 +327,8 @@ function App() {
           <AgentFeed events={agentEvents} />
         </div>
       </div>
+      
+      <AARModal data={reportData} onClose={() => setReportData(null)} />
     </div>
   );
 }

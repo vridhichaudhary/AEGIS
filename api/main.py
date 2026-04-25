@@ -191,6 +191,24 @@ async def process_voice_command(request: CommandAgentRequest):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
+from agents.report_agent import ReportAgent
+
+report_agent = ReportAgent()
+
+@app.get("/api/v1/report/generate")
+async def generate_aar():
+    recent = list(active_incidents.values())
+    if not recent:
+        raise HTTPException(status_code=400, detail="No incidents to report on.")
+    
+    try:
+        report = await report_agent.generate_report(recent)
+        if not report:
+            raise HTTPException(status_code=500, detail="Failed to generate report.")
+        return report
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
 @app.post("/api/v1/emergency/report", response_model=EmergencyCallResponse)
 async def report_emergency(request: EmergencyCallRequest):
     try:
