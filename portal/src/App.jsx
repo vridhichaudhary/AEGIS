@@ -12,6 +12,10 @@ import ReviewQueue from './components/ReviewQueue';
 import CallbackQueue from './components/CallbackQueue';
 import NovelScenarioLog from './components/NovelScenarioLog';
 import SystemLearning from './components/SystemLearning';
+import HospitalStatusPanel from './components/HospitalStatusPanel';
+import MCIPanel from './components/MCIPanel';
+import WhatsAppSimulator from './components/WhatsAppSimulator';
+import ChannelChart from './components/ChannelChart';
 import { connectWebSocket } from './utils/websocket';
 
 function App() {
@@ -19,6 +23,8 @@ function App() {
   const [resources, setResources] = useState([]);
   const [agentEvents, setAgentEvents] = useState([]);
   const [callbacks, setCallbacks] = useState([]);
+  const [hospitals, setHospitals] = useState([]);
+  const [mciState, setMciState] = useState({ active: false, zone: null, details: null });
   const [threatIntelligence, setThreatIntelligence] = useState(null);
   const [isLogoGlowing, setIsLogoGlowing] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
@@ -127,9 +133,20 @@ function App() {
       }
     };
     
+    const loadHospitals = async () => {
+      try {
+        const response = await fetch(`${apiBase}/api/v1/hospitals`);
+        const data = await response.json();
+        setHospitals(data.hospitals || []);
+      } catch (error) {
+        console.error("Failed to load hospitals:", error);
+      }
+    };
+    
     loadHealth();
     loadResources();
     loadCallbacks();
+    loadHospitals();
     const healthInterval = setInterval(loadHealth, 30000); // Every 30 seconds
 
     // WebSocket connection
@@ -235,6 +252,28 @@ function App() {
       else if (data.type === 'callback_resolved') {
         setCallbacks(prev => prev.filter(c => c.incident_id !== data.payload.incident_id));
       }
+      else if (data.type === 'hospital_update') {
+        setHospitals(data.payload);
+      }
+      else if (data.type === 'mci_activation') {
+        setMciState({ active: true, zone: data.payload.zone, details: data.payload.details });
+        // Also push to agent feed
+        setAgentEvents(prev => [{
+          agent: 'MCI PROTOCOL',
+          decision: `🚨 MCI ACTIVATED — ${data.payload.zone}`,
+          reasoning: 'Mass Casualty Incident threshold exceeded. NDMA protocol engaged.',
+          timestamp: new Date().toISOString()
+        }, ...prev].slice(0, 100));
+      }
+      else if (data.type === 'mci_resolved') {
+        setMciState({ active: false, zone: null, details: null });
+        setAgentEvents(prev => [{
+          agent: 'MCI PROTOCOL',
+          decision: `✅ MCI RESOLVED — ${data.payload.zone}`,
+          reasoning: 'Incident surge has dropped below MCI thresholds. System returning to normal operations.',
+          timestamp: new Date().toISOString()
+        }, ...prev].slice(0, 100));
+      }
     };
 
     return () => {
@@ -286,7 +325,7 @@ function App() {
     : 100;
 
   return (
-    <div className="h-screen flex flex-col bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900 text-white overflow-hidden">
+    <div className={`h-screen flex flex-col text-white overflow-hidden transition-all duration-700 ${mciState.active ? 'bg-gradient-to-br from-red-950 via-red-900 to-gray-900' : 'bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900'}`}>
       
       {/* Hero Banner HUD */}
       <div 
@@ -353,7 +392,7 @@ function App() {
       </div>
 
       {/* Secondary Header */}
-      <header className="glass p-3 border-b border-blue-500/30 flex items-center justify-between z-10 shadow-lg flex-shrink-0">
+      <header className={`glass p-3 border-b flex items-center justify-between z-10 shadow-lg flex-shrink-0 transition-all duration-700 ${mciState.active ? 'border-red-500/60 bg-red-950/40' : 'border-blue-500/30'}`}>
         <div className="flex items-center gap-3">
           <div className={`w-10 h-10 bg-gradient-to-br from-blue-500 to-emerald-500 rounded-lg flex items-center justify-center font-bold text-lg shadow-lg transition-all duration-300 ${isLogoGlowing ? 'shadow-[0_0_20px_rgba(56,189,248,0.8)] animate-pulse scale-110' : ''}`}>
             A
@@ -395,6 +434,15 @@ function App() {
         </div>
       </header>
 
+      {/* MCI Alert Banner */}
+      {mciState.active && (
+        <div className="w-full bg-red-700/80 border-y-2 border-red-400 flex items-center justify-center gap-4 py-2 flex-shrink-0 z-30" style={{animation: 'pulse 1s ease-in-out infinite'}}>
+          <span className="text-2xl">🚨</span>
+          <span className="font-black text-white tracking-[0.2em] uppercase text-sm">MCI ACTIVE — {mciState.zone} — NDMA Mass Casualty Protocol Engaged</span>
+          <span className="text-2xl">🚨</span>
+        </div>
+      )}
+
       {/* Main Grid */}
       <div className="flex-1 grid grid-cols-1 gap-4 p-4 overflow-hidden lg:grid-cols-12">
         {/* Left: Map + Queue + Console */}
@@ -412,8 +460,12 @@ function App() {
 
         {/* Right: Metrics + Resources + Feed */}
         <div className="lg:col-span-4 flex flex-col gap-4 overflow-y-auto min-h-0 pr-1 custom-scrollbar">
+          <MCIPanel mciState={mciState} />
           <ThreatIntelligencePanel data={threatIntelligence} />
           <Metrics data={metrics} />
+          <ChannelChart incidents={incidents} />
+          <WhatsAppSimulator />
+          <HospitalStatusPanel hospitals={hospitals} currentIncident={incidents[0]} />
           <SystemLearning />
           <CallbackQueue callbacks={callbacks} onSimulateResponse={handleSimulateCallbackResponse} />
           <NovelScenarioLog incidents={incidents} />

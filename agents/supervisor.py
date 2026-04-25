@@ -98,6 +98,22 @@ class SupervisorAgent:
             initial_state["errors"].append(f"Graph execution failed: {exc}")
             return initial_state
 
+    async def run(self, raw_transcript: str, pre_state: dict = None) -> dict:
+        """Entry point that supports pre-state overrides (e.g., from WhatsApp webhook)."""
+        caller_id = (pre_state or {}).get("caller_id")
+        result = await self.process_call(raw_transcript, caller_id=caller_id)
+        # Inject extra fields from pre_state (channel, gps_override, etc.)
+        if pre_state:
+            for k, v in pre_state.items():
+                if k not in ("caller_id",):
+                    result[k] = v
+            # Apply GPS override into location if present
+            if "gps_override" in pre_state and result.get("location") is not None:
+                result["location"]["latitude"] = pre_state["gps_override"]["latitude"]
+                result["location"]["longitude"] = pre_state["gps_override"]["longitude"]
+                result["location"]["gps_accurate"] = True
+        return result
+
     async def run_sequential(self, state: dict) -> dict:
         state = await self.ingestion.process(state)
         state = await self.parsing.process(state)

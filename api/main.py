@@ -57,9 +57,21 @@ cascade_agent = CascadePredictionAgent()
 command_agent = CommandAgent()
 report_agent = ReportAgent()
 audio_agent = AudioIngestionAgent()
+from agents.mci_agent import MCIAgent
+from agents.image_analysis_agent import ImageAnalysisAgent
+from state.hospitals import HOSPITALS, haversine_distance
 active_incidents: Dict[str, dict] = {}
 CALLBACK_QUEUE: List[dict] = []
 CALLBACK_METRICS = {"total_pending": 0, "total_resolved": 0}
+
+mci_agent = MCIAgent()
+image_analysis_agent = ImageAnalysisAgent()
+MCI_STATE = {
+    "active": False,
+    "zone": None,
+    "details": None
+}
+LATEST_THREAT_INTEL = None
 
 async def proactive_threat_loop():
     while True:
@@ -69,6 +81,8 @@ async def proactive_threat_loop():
             try:
                 intel = await cascade_agent.analyze(recent)
                 if intel:
+                    global LATEST_THREAT_INTEL
+                    LATEST_THREAT_INTEL = intel
                     await manager.broadcast({"type": "threat_intelligence", "payload": intel})
             except Exception as e:
                 print(f"Error in threat loop: {e}")
@@ -88,6 +102,42 @@ async def resource_refresh_loop():
             ]
         })
 
+async def hospital_bed_fluctuation_loop():
+    """Background task to simulate real-time hospital bed availability."""
+    while True:
+        await asyncio.sleep(60)
+        
+        updates = []
+        for h in HOSPITALS:
+            # Fluctuate beds by -2 to +2, ensuring it stays between 0 and trauma_beds limit
+            delta = random.randint(-2, 2)
+            old_beds = h["available"]
+            h["available"] = max(0, min(h["trauma_beds"], h["available"] + delta))
+            
+            if old_beds != h["available"]:
+                updates.append(h)
+                
+            if h["available"] == 0 and old_beds > 0:
+                # Trigger diversion alert
+                # Find an alternative with beds
+                alts = [alt for alt in HOSPITALS if alt["available"] > 0 and alt["id"] != h["id"]]
+                alt_name = alts[0]["name"] if alts else "any other facility"
+                
+                await manager.broadcast({
+                    "type": "system_alert",
+                    "payload": {
+                        "level": "critical",
+                        "title": "HOSPITAL DIVERSION ALERT",
+                        "message": f"DIVERSION: {h['name']} at capacity (0 beds) — redirect incoming to {alt_name}."
+                    }
+                })
+        
+        if updates:
+            await manager.broadcast({
+                "type": "hospital_update",
+                "payload": HOSPITALS
+            })
+
 @app.on_event("startup")
 async def startup_event():
     # Initialize SQLite database
@@ -101,6 +151,101 @@ async def startup_event():
 
     asyncio.create_task(proactive_threat_loop())
     asyncio.create_task(resource_refresh_loop())
+    asyncio.create_task(hospital_bed_fluctuation_loop())
+    asyncio.create_task(mci_surge_detector_loop())
+
+async def mci_surge_detector_loop():
+    """Background task to detect Mass Casualty Incidents."""
+    global MCI_STATE
+    while True:
+        await asyncio.sleep(30)
+        
+        recent_incidents = []
+        now = datetime.now()
+        for inc in active_incidents.values():
+            if inc.get("timestamp"):
+                try:
+                    ts = datetime.fromisoformat(inc["timestamp"])
+                    if (now - ts).total_seconds() <= 600: # last 10 mins
+                        recent_incidents.append(inc)
+                except ValueError:
+                    pass
+        
+        if not recent_incidents:
+            if MCI_STATE["active"]:
+                # Auto-resolve
+                MCI_STATE["active"] = False
+                MCI_STATE["details"] = None
+                await manager.broadcast({"type": "mci_resolved", "payload": {"zone": MCI_STATE["zone"]}})
+            continue
+
+        trigger = False
+        zone = "Unknown Region"
+
+        # 1. 3+ incidents within 1km radius in last 5 minutes
+        recent_5m = [i for i in recent_incidents if (now - datetime.fromisoformat(i["timestamp"])).total_seconds() <= 300]
+        for i, inc1 in enumerate(recent_5m):
+            cluster_count = 1
+            lat1 = inc1.get("location", {}).get("latitude")
+            lng1 = inc1.get("location", {}).get("longitude")
+            if not lat1 or not lng1: continue
+            
+            for inc2 in recent_5m[i+1:]:
+                lat2 = inc2.get("location", {}).get("latitude")
+                lng2 = inc2.get("location", {}).get("longitude")
+                if not lat2 or not lng2: continue
+                dist = haversine_distance(lat1, lng1, lat2, lng2)
+                if dist <= 1.0:
+                    cluster_count += 1
+            if cluster_count >= 3:
+                trigger = True
+                zone = inc1.get("location", {}).get("raw_text", "Clustered Area")
+                break
+
+        # 2. 2+ P1 incidents in last 3 mins
+        if not trigger:
+            recent_3m_p1 = [i for i in recent_incidents if i.get("priority") == "P1" and (now - datetime.fromisoformat(i["timestamp"])).total_seconds() <= 180]
+            if len(recent_3m_p1) >= 2:
+                trigger = True
+                zone = recent_3m_p1[0].get("location", {}).get("raw_text", "Critical Zone")
+
+        # 3. Victim count > 15 in last 10 mins
+        if not trigger:
+            total_victims = sum(int(i.get("incident_type", {}).get("victim_count", 0) or 0) for i in recent_incidents)
+            if total_victims >= 15:
+                trigger = True
+                zone = "Regional Zone"
+
+        # 4. Cascade Prediction > 85%
+        if not trigger and LATEST_THREAT_INTEL:
+            for pred in LATEST_THREAT_INTEL.get("cascade_predictions", []):
+                if pred.get("confidence_percentage", 0) > 85:
+                    trigger = True
+                    zone = LATEST_THREAT_INTEL.get("risk_zones", ["Predicted Danger Zone"])[0]
+                    break
+
+        if trigger and not MCI_STATE["active"]:
+            MCI_STATE["active"] = True
+            MCI_STATE["zone"] = zone
+            
+            # Request LLM protocol
+            resources = {"ambulances_available": random.randint(2, 6), "fire_trucks_available": random.randint(1, 4)}
+            mci_response = await mci_agent.generate_mci_response(zone, len(recent_incidents), resources)
+            MCI_STATE["details"] = mci_response
+            
+            await manager.broadcast({
+                "type": "mci_activation",
+                "payload": {
+                    "zone": zone,
+                    "details": mci_response
+                }
+            })
+            
+        elif not trigger and MCI_STATE["active"]:
+            # Auto-resolve
+            MCI_STATE["active"] = False
+            MCI_STATE["details"] = None
+            await manager.broadcast({"type": "mci_resolved", "payload": {"zone": MCI_STATE["zone"]}})
 
 
 class EmergencyCallRequest(BaseModel):
@@ -120,6 +265,26 @@ class CommandAgentRequest(BaseModel):
 
 class CallbackResponseRequest(BaseModel):
     additional_info: str
+
+class WhatsAppTextBody(BaseModel):
+    body: str
+
+class WhatsAppLocation(BaseModel):
+    latitude: float
+    longitude: float
+
+class WhatsAppMessage(BaseModel):
+    sender: str = "" 
+    type: str = "text"
+    text: Optional[WhatsAppTextBody] = None
+    location: Optional[WhatsAppLocation] = None
+    image: Optional[dict] = None
+
+    class Config:
+        populate_by_name = True
+
+    # WhatsApp uses 'from' as key which is a reserved Python word
+    model_config = {"populate_by_name": True}
 
 class EmergencyCallResponse(BaseModel):
     incident_id: str
@@ -164,6 +329,9 @@ def serialize_incident(result: dict) -> dict:
         "suggested_callback_script": result.get("suggested_callback_script"),
         "triage_method": result.get("triage_method", "heuristic"),
         "transcript": result.get("raw_transcript", ""),
+        "destination_hospital": result.get("destination_hospital"),
+        "hospital_warning": result.get("hospital_warning"),
+        "channel": result.get("channel", "voice_call"),
     }
 
 
@@ -251,6 +419,60 @@ async def health_check():
         "redis_host": settings.REDIS_HOST,
         "environment": settings.ENVIRONMENT,
     }
+
+
+@app.post("/api/v1/webhook/whatsapp")
+async def whatsapp_webhook(request: dict):
+    """
+    Mock WhatsApp Business API webhook.
+    Simulates the real WhatsApp API message format.
+    """
+    msg_type = request.get("type", "text")
+    caller_id = request.get("from", "Unknown")
+    transcript = None
+    gps_lat = None
+    gps_lng = None
+
+    if msg_type == "text":
+        transcript = request.get("text", {}).get("body", "")
+    elif msg_type == "location":
+        loc = request.get("location", {})
+        gps_lat = loc.get("latitude")
+        gps_lng = loc.get("longitude")
+        # Also grab any accompanying text
+        transcript = request.get("text", {}).get("body", "Emergency reported via WhatsApp live location.")
+    elif msg_type == "image":
+        img_url = request.get("image", {}).get("link", "whatsapp_image")
+        transcript = await image_analysis_agent.describe(img_url)
+
+    if not transcript:
+        raise HTTPException(status_code=400, detail="No usable message content.")
+
+    # Build initial state injection for GPS if available
+    pre_state = {"channel": "whatsapp", "caller_id": caller_id}
+    if gps_lat and gps_lng:
+        pre_state["gps_override"] = {"latitude": gps_lat, "longitude": gps_lng}
+
+    try:
+        result = await supervisor.run(transcript, pre_state=pre_state)
+
+        incident_id = result["incident_id"]
+        short_id = incident_id[:8].upper()
+        eta = (result.get("assigned_resources") or [{}])[0].get("eta_minutes", 6)
+        whatsapp_reply = (
+            f"Your emergency report has been received. "
+            f"AEGIS ID: #INC-{short_id}. "
+            f"Resources dispatched. ETA: {eta} minutes. "
+            f"Reply with your exact location pin if possible."
+        )
+        print(f"[WhatsApp Auto-Reply to {caller_id}]: {whatsapp_reply}")
+
+        result["channel"] = "whatsapp"
+        await publish_result(result)
+        serialized = serialize_incident(result)
+        return {**serialized, "whatsapp_reply": whatsapp_reply}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.websocket("/ws/events")
@@ -363,6 +585,10 @@ async def apply_learning_rule():
     # Mock endpoint to apply suggestion
     await asyncio.to_thread(db.increment_metric, "decisions_improved_by_feedback", 1)
     return {"status": "success", "message": "Rule applied successfully"}
+
+@app.get("/api/v1/hospitals")
+async def get_hospitals():
+    return {"hospitals": HOSPITALS}
 
 @app.get("/api/v1/resources")
 async def get_resources():

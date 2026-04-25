@@ -13,6 +13,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
 from config.settings import settings
+from state.hospitals import HOSPITALS, haversine_distance
 
 try:
     import redis
@@ -250,6 +251,23 @@ class DispatchAgent(BaseAgent):
                 "incident_status": "PENDING"
             }
 
+        dest_hospital = None
+        hospital_warning = None
+        
+        # Determine if ambulance is requested
+        needs_ambulance = any(req["type"].startswith("ambulance") for req in requirements)
+        if needs_ambulance and has_gps:
+            # map category to specialty
+            cat = state.get("incident_type", {}).get("category", "")
+            specialty_map = {"accident": "trauma", "medical": "cardiac", "fire": "burn"}
+            required_specialty = specialty_map.get(cat, "trauma")
+            
+            dest_hospital, hospital_warning = self.select_destination_hospital(
+                incident_location["latitude"], 
+                incident_location["longitude"], 
+                required_specialty
+            )
+
         assigned_resources = await self.allocate_resources(incident_id, priority, requirements, incident_location)
 
         status = "assigned" if assigned_resources else "resource_unavailable"
@@ -280,4 +298,53 @@ class DispatchAgent(BaseAgent):
             "dispatch_timestamp": datetime.now() if assigned_resources else None,
             "joint_dispatch_memo": joint_dispatch_memo,
             "agency_timings": agency_timings,
+            "destination_hospital": dest_hospital,
+            "hospital_warning": hospital_warning,
         }
+
+    def select_destination_hospital(self, lat: float, lng: float, required_specialty: str) -> Tuple[Optional[dict], Optional[str]]:
+        valid_hospitals = []
+        for h in HOSPITALS:
+            if required_specialty in h["specialties"]:
+                valid_hospitals.append(h)
+                
+        if not valid_hospitals:
+            valid_hospitals = HOSPITALS # fallback to all
+            
+        # calculate distances and score
+        scored_hospitals = []
+        for h in valid_hospitals:
+            dist = haversine_distance(lat, lng, h["lat"], h["lng"])
+            avail = h["available"]
+            # score: distance / (available beds + 0.1 to avoid div by zero)
+            # lower score is better (closer and more beds)
+            score = dist / max(avail, 0.1)
+            scored_hospitals.append({"hospital": h, "distance_km": dist, "score": score, "available": avail})
+            
+        # sort by score
+        scored_hospitals.sort(key=lambda x: x["score"])
+        
+        # filter out full hospitals
+        available_hospitals = [sh for sh in scored_hospitals if sh["available"] > 0]
+        
+        warning = None
+        if not available_hospitals:
+            # all full, just go to the closest
+            closest = scored_hospitals[0]
+            warning = f"CRITICAL: All hospitals full. Routing to closest ({closest['hospital']['name']})."
+            selected = closest
+        else:
+            selected = available_hospitals[0]
+            # Check if closest overall was full
+            closest_overall = scored_hospitals[0]
+            if closest_overall["available"] == 0 and closest_overall["hospital"]["id"] != selected["hospital"]["id"]:
+                warning = f"{closest_overall['hospital']['name']} at capacity — routing to {selected['hospital']['name']} ({abs(selected['distance_km'] - closest_overall['distance_km']):.1f}km further but {selected['available']} beds available)"
+
+        dest_data = {
+            "name": selected["hospital"]["name"],
+            "distance_km": selected["distance_km"],
+            "available_beds": selected["available"],
+            "eta_to_hospital": round((selected["distance_km"] / 40.0) * 60) # 40 km/h avg speed
+        }
+        
+        return dest_data, warning

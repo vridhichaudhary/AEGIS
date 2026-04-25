@@ -1,6 +1,23 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, MapPin, AlertCircle, ShieldAlert, Mic } from 'lucide-react';
 
+const CHANNEL_META = {
+  whatsapp:     { label: 'WhatsApp', badge: 'W', color: 'text-green-300 bg-green-900/30 border-green-500/40' },
+  voice_upload: { label: 'Audio Upload', badge: '🎙', color: 'text-purple-300 bg-purple-900/30 border-purple-500/40' },
+  voice_call:   { label: '112 Call', badge: '📞', color: 'text-blue-300 bg-blue-900/30 border-blue-500/40' },
+  operator:     { label: 'Operator', badge: 'OP', color: 'text-gray-300 bg-gray-800/50 border-gray-600/40' },
+};
+
+const ChannelBadge = ({ channel, audioSource }) => {
+  const ch = channel || (audioSource === 'voice_upload' ? 'voice_upload' : 'voice_call');
+  const meta = CHANNEL_META[ch] || CHANNEL_META.voice_call;
+  return (
+    <span className={`ml-1 text-[9px] px-1.5 py-0.5 rounded border font-bold uppercase tracking-widest flex items-center gap-0.5 ${meta.color}`}>
+      {meta.badge} {meta.label}
+    </span>
+  );
+};
+
 const CountdownTimer = ({ deadline }) => {
   const [timeLeft, setTimeLeft] = useState(0);
 
@@ -211,6 +228,7 @@ const PriorityQueue = ({ incidents, onResolve }) => {
                          <Mic size={10} /> AUDIO
                        </span>
                     )}
+                    <ChannelBadge channel={incident.channel} audioSource={incident.audio_source} />
                   </div>
                   <div className="text-right flex flex-col items-end gap-1">
                     {isReviewQueue ? (
