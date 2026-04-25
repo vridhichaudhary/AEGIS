@@ -395,9 +395,6 @@ class WhatsAppMessage(BaseModel):
     location: Optional[WhatsAppLocation] = None
     image: Optional[dict] = None
 
-    class Config:
-        populate_by_name = True
-
     # WhatsApp uses 'from' as key which is a reserved Python word
     model_config = {"populate_by_name": True}
 
