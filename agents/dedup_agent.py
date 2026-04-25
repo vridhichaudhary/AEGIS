@@ -12,9 +12,14 @@ from __future__ import annotations
 import math
 import time
 from datetime import datetime, timedelta
-from typing import List, Optional
+from typing import List, Optional, Any
 
-import numpy as np
+try:
+    import numpy as np
+    _NP_AVAILABLE = True
+except ImportError:
+    np = None
+    _NP_AVAILABLE = False
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -152,7 +157,7 @@ def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     return R * 2 * math.asin(math.sqrt(max(0.0, a)))
 
 
-def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
+def cosine_similarity(a: Any, b: Any) -> float:
     """Cosine similarity between two 1-D numpy vectors."""
     denom = np.linalg.norm(a) * np.linalg.norm(b)
     if denom == 0:
@@ -223,7 +228,7 @@ class DeduplicationAgent:
     # ------------------------------------------------------------------
     # Embedding
     # ------------------------------------------------------------------
-    def embed(self, text: str) -> Optional[np.ndarray]:
+    def embed(self, text: str) -> Optional[Any]:
         """Embed normalized text. Returns None if model unavailable."""
         if self.embedder is None:
             return None
@@ -324,7 +329,7 @@ class DeduplicationAgent:
         lat: float,
         lng: float,
         timestamp: datetime,
-        embedding: Optional[np.ndarray],
+        embedding: Optional[Any],
     ):
         """Add incident to the in-process store."""
         self._store.append(
