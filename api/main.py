@@ -8,6 +8,8 @@ from pydantic import BaseModel
 
 from agents.supervisor import SupervisorAgent
 from agents.base_agent import BaseAgent
+from agents.cascade_agent import CascadePredictionAgent
+from agents.command_agent import CommandAgent
 from config.settings import settings
 from simulation.scenarios import SimulationScenarios
 
@@ -48,12 +50,36 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 supervisor = SupervisorAgent()
+cascade_agent = CascadePredictionAgent()
+command_agent = CommandAgent()
 active_incidents: Dict[str, dict] = {}
+
+
+async def proactive_threat_loop():
+    while True:
+        await asyncio.sleep(60)
+        recent = list(active_incidents.values())
+        if recent:
+            try:
+                intel = await cascade_agent.analyze(recent)
+                if intel:
+                    await manager.broadcast({"type": "threat_intelligence", "payload": intel})
+            except Exception as e:
+                print(f"Error in threat loop: {e}")
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(proactive_threat_loop())
 
 
 class EmergencyCallRequest(BaseModel):
     transcript: str
     caller_id: Optional[str] = None
+
+
+class CommandAgentRequest(BaseModel):
+    command: str
+    language: str = "en-US"
 
 
 class EmergencyCallResponse(BaseModel):
@@ -150,6 +176,19 @@ async def websocket_endpoint(websocket: WebSocket):
             await websocket.receive_text()
     except WebSocketDisconnect:
         manager.disconnect(websocket)
+
+
+@app.post("/api/v1/command")
+async def process_voice_command(request: CommandAgentRequest):
+    recent = list(active_incidents.values())
+    all_assigned = []
+    for inc in recent:
+        all_assigned.extend(inc.get("assigned_resources", []))
+    try:
+        response = await command_agent.process_command(request.command, request.language, recent, all_assigned)
+        return response
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 @app.post("/api/v1/emergency/report", response_model=EmergencyCallResponse)

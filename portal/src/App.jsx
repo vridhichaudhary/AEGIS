@@ -5,12 +5,16 @@ import Metrics from './components/Metrics';
 import PriorityQueue from './components/PriorityQueue';
 import ResourceGrid from './components/ResourceGrid';
 import SimulatorConsole from './components/SimulatorConsole';
+import ThreatIntelligencePanel from './components/ThreatIntelligencePanel';
+import VoiceCommand from './components/VoiceCommand';
 import { connectWebSocket } from './utils/websocket';
 
 function App() {
   const [incidents, setIncidents] = useState([]);
   const [resources, setResources] = useState([]);
   const [agentEvents, setAgentEvents] = useState([]);
+  const [threatIntelligence, setThreatIntelligence] = useState(null);
+  const [isLogoGlowing, setIsLogoGlowing] = useState(false);
   const [metrics, setMetrics] = useState({
     active_incidents: 0,
     avg_eta: '-',
@@ -149,6 +153,9 @@ function App() {
       else if (data.type === 'agent_event') {
         setAgentEvents(prev => [data.payload, ...prev].slice(0, 100));
       }
+      else if (data.type === 'threat_intelligence') {
+        setThreatIntelligence(data.payload);
+      }
     };
 
     return () => {
@@ -235,7 +242,7 @@ function App() {
       {/* Secondary Header */}
       <header className="glass p-3 border-b border-blue-500/30 flex items-center justify-between z-10 shadow-lg flex-shrink-0">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-emerald-500 rounded-lg flex items-center justify-center font-bold text-lg shadow-lg">
+          <div className={`w-10 h-10 bg-gradient-to-br from-blue-500 to-emerald-500 rounded-lg flex items-center justify-center font-bold text-lg shadow-lg transition-all duration-300 ${isLogoGlowing ? 'shadow-[0_0_20px_rgba(56,189,248,0.8)] animate-pulse scale-110' : ''}`}>
             A
           </div>
           <div>
@@ -245,6 +252,7 @@ function App() {
           </div>
         </div>
         <div className="flex items-center gap-6">
+          <VoiceCommand onGlow={setIsLogoGlowing} />
           <div className="flex items-center gap-2">
             <div className={`w-3 h-3 rounded-full ${
               metrics.backend_status === 'healthy' 
@@ -284,8 +292,9 @@ function App() {
 
         {/* Right: Metrics + Resources + Feed */}
         <div className="lg:col-span-4 flex flex-col gap-4 overflow-hidden min-h-0">
+          <ThreatIntelligencePanel data={threatIntelligence} />
           <Metrics data={metrics} />
-          <ResourceGrid resources={resources} />
+          <ResourceGrid resources={resources} prepositionOrders={threatIntelligence?.preposition_orders} />
           <AgentFeed events={agentEvents} />
         </div>
       </div>
