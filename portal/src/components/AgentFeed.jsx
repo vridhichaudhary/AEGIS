@@ -54,6 +54,26 @@ const DuplicatePanel = ({ data }) => {
   );
 };
 
+const NovelScenarioPanel = ({ data }) => {
+  const { priority, reasoning } = data;
+  return (
+    <div className="mt-2 p-3 rounded-lg border border-purple-500/50 bg-purple-900/20">
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="text-purple-400 text-lg">🧠</span>
+        <span className="text-xs font-bold text-purple-300 uppercase tracking-wider">Novel Scenario Protocol</span>
+        <span className={`ml-auto text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
+          priority === 'P1' ? 'text-red-400 border-red-500/30 bg-red-900/40' : 
+          priority === 'P2' ? 'text-orange-400 border-orange-500/30 bg-orange-900/40' :
+          'text-purple-400 border-purple-500/30 bg-purple-900/40'
+        }`}>{priority}</span>
+      </div>
+      <p className="text-[11px] text-purple-200 leading-snug italic border-l-2 border-purple-500/30 pl-2">
+        {reasoning}
+      </p>
+    </div>
+  );
+};
+
 const AgentFeed = ({ events = [] }) => {
   const [soundEnabled, setSoundEnabled] = useState(true);
 
@@ -75,6 +95,12 @@ const AgentFeed = ({ events = [] }) => {
       }
       if (agent === 'triage') {
         const priority = (decision.match(/Assigned\s+(P\d)/i) || [])[1] || 'Priority';
+        if (event.triage_method === 'llm_novel_scenario') {
+            return {
+                type: 'novel_scenario_panel',
+                data: { priority, reasoning: event.reasoning }
+            };
+        }
         const shortReason = reasoning.split('.')[0] || reasoning;
         return `⚡ Triage: Severity upgraded to ${priority} — ${shortReason}.`;
       }
@@ -142,6 +168,7 @@ const AgentFeed = ({ events = [] }) => {
     if (typeof narrative === 'object') {
       if (narrative.type === 'validation_panel') return <ValidationPanel data={narrative.data} />;
       if (narrative.type === 'duplicate_panel') return <DuplicatePanel data={narrative.data} />;
+      if (narrative.type === 'novel_scenario_panel') return <NovelScenarioPanel data={narrative.data} />;
     }
     return (
       <p className={`${isLatest ? 'text-[15px] font-bold text-white' : 'text-[12px] text-gray-300'} leading-relaxed tracking-wide`}>

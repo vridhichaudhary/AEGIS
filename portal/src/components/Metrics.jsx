@@ -26,6 +26,27 @@ const Metrics = ({ data }) => {
           <p className="text-xs text-gray-400 mt-1 uppercase tracking-wider">LLM</p>
         </div>
       </div>
+      
+      {data.callback_metrics && (data.callback_metrics.total_pending > 0 || data.callback_metrics.total_resolved > 0) && (
+        <div className="mt-4 bg-gray-800/50 p-3 rounded-lg border border-yellow-500/30">
+          <div className="flex justify-between items-center mb-1">
+            <span className="text-xs text-gray-400 uppercase tracking-wider">Callback Resolution</span>
+            <span className="text-sm font-bold text-yellow-400">
+              {Math.round((data.callback_metrics.total_resolved / (data.callback_metrics.total_pending + data.callback_metrics.total_resolved)) * 100) || 0}%
+            </span>
+          </div>
+          <div className="w-full bg-gray-700 rounded-full h-1.5">
+            <div 
+              className="bg-yellow-400 h-1.5 rounded-full transition-all duration-500" 
+              style={{ width: `${Math.round((data.callback_metrics.total_resolved / (data.callback_metrics.total_pending + data.callback_metrics.total_resolved)) * 100) || 0}%` }}
+            ></div>
+          </div>
+          <div className="flex justify-between mt-1 text-[10px] text-gray-500">
+            <span>Pending: {data.callback_metrics.total_pending}</span>
+            <span>Resolved: {data.callback_metrics.total_resolved}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

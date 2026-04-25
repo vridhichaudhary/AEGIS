@@ -58,6 +58,8 @@ command_agent = CommandAgent()
 report_agent = ReportAgent()
 audio_agent = AudioIngestionAgent()
 active_incidents: Dict[str, dict] = {}
+CALLBACK_QUEUE: List[dict] = []
+CALLBACK_METRICS = {"total_pending": 0, "total_resolved": 0}
 
 async def proactive_threat_loop():
     while True:
@@ -116,6 +118,8 @@ class CommandAgentRequest(BaseModel):
     command: str
     language: str = "en-US"
 
+class CallbackResponseRequest(BaseModel):
+    additional_info: str
 
 class EmergencyCallResponse(BaseModel):
     incident_id: str
@@ -155,6 +159,11 @@ def serialize_incident(result: dict) -> dict:
         "duplicate_of": result.get("duplicate_of"),
         "duplicate_confidence": result.get("duplicate_confidence", 0.0),
         "audio_source": result.get("audio_source"),
+        "requires_callback": result.get("requires_callback", False),
+        "missing_fields": result.get("missing_fields", []),
+        "suggested_callback_script": result.get("suggested_callback_script"),
+        "triage_method": result.get("triage_method", "heuristic"),
+        "transcript": result.get("raw_transcript", ""),
     }
 
 
@@ -163,6 +172,23 @@ async def publish_result(result: dict):
     incident_payload = serialize_incident(result)
     active_incidents[result["incident_id"]] = incident_payload
     
+    # Handle callback queue logic
+    if incident_payload.get("requires_callback"):
+        callback_entry = {
+            "caller_id": result.get("caller_id") or "Unknown",
+            "incident_id": result["incident_id"],
+            "transcript": result.get("raw_transcript", ""),
+            "missing_fields": incident_payload.get("missing_fields", []),
+            "suggested_question": incident_payload.get("suggested_callback_script", ""),
+            "created_at": datetime.now().isoformat(),
+            "attempts": 1
+        }
+        # Check if already in queue to avoid duplicates
+        if not any(c["incident_id"] == result["incident_id"] for c in CALLBACK_QUEUE):
+            CALLBACK_QUEUE.append(callback_entry)
+            CALLBACK_METRICS["total_pending"] += 1
+            await manager.broadcast({"type": "callback_update", "payload": callback_entry})
+
     # Broadcast incident update
     await manager.broadcast({"type": "incident_update", "payload": incident_payload})
     
@@ -338,7 +364,55 @@ async def get_incident_history(limit: int = 50):
 async def get_metrics_snapshot():
     # Run DB fetch in background thread
     metrics = await asyncio.to_thread(db.get_metrics)
+    metrics["callback_metrics"] = CALLBACK_METRICS
+    metrics["callback_queue_length"] = len(CALLBACK_QUEUE)
     return metrics
+
+@app.get("/api/v1/callbacks")
+async def get_callbacks():
+    return {"callbacks": CALLBACK_QUEUE}
+
+@app.post("/api/v1/callback/{incident_id}/response")
+async def process_callback_response(incident_id: str, request: CallbackResponseRequest):
+    # Find the incident in the queue
+    callback_entry = next((c for c in CALLBACK_QUEUE if c["incident_id"] == incident_id), None)
+    if not callback_entry:
+        raise HTTPException(status_code=404, detail="Incident not found in callback queue")
+    
+    # Combine transcripts
+    combined_transcript = f"{callback_entry['transcript']} [Callback Additions]: {request.additional_info}"
+    
+    try:
+        # Reprocess the call
+        result = await supervisor.process_call(raw_transcript=combined_transcript, caller_id=callback_entry["caller_id"])
+        
+        # Check if it still requires a callback
+        if not result.get("requires_callback"):
+            CALLBACK_QUEUE.remove(callback_entry)
+            CALLBACK_METRICS["total_pending"] -= 1
+            CALLBACK_METRICS["total_resolved"] += 1
+            await manager.broadcast({"type": "callback_resolved", "payload": {"incident_id": incident_id}})
+            result["agent_trail"].append({
+                "agent": "system",
+                "timestamp": datetime.now(),
+                "decision": "Callback Resolution",
+                "reasoning": "Location confirmed via callback — upgrading from PENDING to DISPATCHED"
+            })
+            
+        eta = min((resource["eta_minutes"] for resource in result["assigned_resources"]), default=None)
+        await publish_result(result)
+
+        return EmergencyCallResponse(
+            incident_id=result["incident_id"],
+            status="processed",
+            priority=result["priority"],
+            assigned_resources=result["assigned_resources"],
+            eta_minutes=eta,
+            dispatch_status=result["dispatch_status"],
+            agent_trail=result["agent_trail"],
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 @app.post("/api/v1/emergency/audio", response_model=EmergencyCallResponse)
 async def report_emergency_audio(audio: UploadFile = File(...), caller_id: Optional[str] = Form(None)):

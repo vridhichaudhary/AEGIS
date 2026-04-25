@@ -140,6 +140,24 @@ class TriageAgent(BaseAgent):
                 "golden_hour_at_risk": False,
             }
 
+        # Indian emergency type heuristics fallback
+        if any(token in text for token in ["chemical spill", "chemical", "gas leak"]):
+            return {"priority_level": "P1", "priority_justification": "Chemical/gas leak requires hazmat and fire response.", "required_resources": [{"type": "fire_truck_rescue", "quantity": 1, "specialized": True}, {"type": "ambulance", "quantity": 1, "specialized": False}], "estimated_severity": "critical", "golden_hour_at_risk": True}
+        if any(token in text for token in ["building collapse", "gir gaya", "collapse"]):
+            return {"priority_level": "P1", "priority_justification": "Building collapse requires heavy rescue.", "required_resources": [{"type": "rescue_team", "quantity": 1, "specialized": True}, {"type": "ambulance_trauma", "quantity": 1, "specialized": True}], "estimated_severity": "critical", "golden_hour_at_risk": True}
+        if any(token in text for token in ["stampede", "bheed"]):
+            return {"priority_level": "P1", "priority_justification": "Stampede involves multiple trauma victims.", "required_resources": [{"type": "police", "quantity": 1, "specialized": False}, {"type": "ambulance_trauma", "quantity": 2, "specialized": True}], "estimated_severity": "critical", "golden_hour_at_risk": True}
+        if any(token in text for token in ["cylinder blast", "blast", "explosion"]):
+            return {"priority_level": "P1", "priority_justification": "Gas cylinder blast requires fire and medical.", "required_resources": [{"type": "fire_truck", "quantity": 1, "specialized": False}, {"type": "ambulance_trauma", "quantity": 1, "specialized": True}], "estimated_severity": "critical", "golden_hour_at_risk": True}
+        if any(token in text for token in ["drowning", "doob"]):
+            return {"priority_level": "P1", "priority_justification": "Drowning requires immediate resuscitation.", "required_resources": [{"type": "ambulance_cardiac", "quantity": 1, "specialized": True}], "estimated_severity": "critical", "golden_hour_at_risk": True}
+        if any(token in text for token in ["electrocution", "current", "bijli"]):
+            return {"priority_level": "P1", "priority_justification": "Electrocution requires immediate cardiac evaluation.", "required_resources": [{"type": "ambulance_cardiac", "quantity": 1, "specialized": True}], "estimated_severity": "critical", "golden_hour_at_risk": True}
+        if any(token in text for token in ["snakebite", "saamp", "snake"]):
+            return {"priority_level": "P2", "priority_justification": "Snakebite requires anti-venom at hospital.", "required_resources": [{"type": "ambulance", "quantity": 1, "specialized": False}], "estimated_severity": "serious", "golden_hour_at_risk": False}
+        if any(token in text for token in ["heat stroke", "loo", "heatstroke"]):
+            return {"priority_level": "P2", "priority_justification": "Heat stroke requires immediate cooling and fluids.", "required_resources": [{"type": "ambulance", "quantity": 1, "specialized": False}], "estimated_severity": "serious", "golden_hour_at_risk": False}
+
         return {
             "priority_level": "P4",
             "priority_justification": "Insufficient evidence of an active emergency after validation.",
@@ -150,10 +168,25 @@ class TriageAgent(BaseAgent):
 
     async def process(self, state: dict) -> dict:
         triage_data = None
+        triage_method = "llm_standard"
+        category = state["incident_type"]["category"]
+        unknown_emergency = (category == "other" or category is None)
 
         if self.llm_available and HumanMessage is not None:
             format_instructions = self.parser.get_format_instructions()
-            prompt = f"""You are an expert emergency dispatch triage officer.
+            
+            if unknown_emergency:
+                triage_method = "llm_novel_scenario"
+                prompt = f"""You are a senior emergency triage officer. A 112 call came in with unrecognized emergency type.
+Transcript: {state['normalized_text']}
+Distress indicators found: {state.get('severity_clues', [])}
+CRITICAL RULE: When in doubt, OVER-TRIAGE rather than under-triage. A falsely dispatched ambulance costs money; an untreated emergency costs a life.
+Assess: 1) What is the most likely emergency type? 2) What is the appropriate priority P1-P5?
+3) What resources are most likely needed? 4) What is your confidence level?
+Return JSON with: category, priority_level, required_resources, confidence, priority_justification (map the reasoning here), estimated_severity (critical, serious, moderate, minor), golden_hour_at_risk (boolean)
+{format_instructions}"""
+            else:
+                prompt = f"""You are an expert emergency dispatch triage officer.
 Your task is to assign an emergency priority (P1-P5) and allocate resources based on standard operating procedures.
 
 Evaluate if this incident can receive definitive care within the 60-minute golden hour. If not, escalate priority and flag golden_hour_at_risk=true.
@@ -178,7 +211,21 @@ Confidence: {state['confidence_score']}
                 state["errors"].append(f"Triage LLM fallback triggered: {exc}")
 
         if triage_data is None:
-            triage_data = self.heuristic_triage(state)
+            if unknown_emergency:
+                triage_method = "safe_default"
+                triage_data = {
+                    "priority_level": "P2",
+                    "priority_justification": "Unknown emergency type. Defaulting to safe over-triage.",
+                    "required_resources": [
+                        {"type": "ambulance", "quantity": 1, "specialized": False},
+                        {"type": "police", "quantity": 1, "specialized": False}
+                    ],
+                    "estimated_severity": "serious",
+                    "golden_hour_at_risk": False
+                }
+            else:
+                triage_method = "heuristic"
+                triage_data = self.heuristic_triage(state)
 
         priority = triage_data.get("priority_level", "P4")
         priority_score = self.PRIORITY_SCORES.get(priority, 3.0)
@@ -188,12 +235,14 @@ Confidence: {state['confidence_score']}
         golden_hour_deadline = state["timestamp"] + timedelta(minutes=60) if is_critical else None
         golden_hour_at_risk = triage_data.get("golden_hour_at_risk", is_critical) if is_critical else False
 
+        state["triage_method"] = triage_method
         state["agent_trail"].append(
             {
                 "agent": "triage",
                 "timestamp": datetime.now(),
                 "decision": f"Assigned {priority}{' - ⚠ GOLDEN HOUR AT RISK' if golden_hour_at_risk else ''}",
                 "reasoning": triage_data.get("priority_justification", ""),
+                "triage_method": triage_method
             }
         )
 
@@ -206,4 +255,5 @@ Confidence: {state['confidence_score']}
             "triage_reasoning": triage_data.get("priority_justification", ""),
             "golden_hour_deadline": golden_hour_deadline,
             "golden_hour_at_risk": golden_hour_at_risk,
+            "triage_method": triage_method,
         }

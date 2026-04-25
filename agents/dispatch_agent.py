@@ -234,6 +234,14 @@ class DispatchAgent(BaseAgent):
             # Memo logic remains same...
             pass
 
+        if state.get("requires_callback"):
+            return {
+                **state,
+                "assigned_resources": [],
+                "dispatch_status": "pending_callback",
+                "incident_status": "PENDING_INFO"
+            }
+
         if not has_location:
             return {
                 **state,

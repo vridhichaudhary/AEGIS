@@ -482,6 +482,13 @@ Instructions:
             "urgency_level": urgency,
         }
 
+    def generate_follow_up(self, missing_fields: list[str]) -> str:
+        """Generate a contextual follow-up question when critical info is missing."""
+        if "location" in missing_fields:
+            return "What is the nearest landmark, major road, or sector number near you?"
+        return "Could you provide more details about the situation?"
+
+
     async def process(self, state: dict) -> dict:
         text = state["normalized_text"]
         lang_code = state["language_code"]
@@ -502,12 +509,25 @@ Instructions:
         location_text = parsed_data.get("location_text", "")
         lat, lon = IndianGeocoder.geocode(location_text)
 
+        confidence = 0.88 if location_text else 0.3
+        
+        requires_callback = state.get("requires_callback", False)
+        missing_fields = state.get("missing_fields", [])
+        suggested_question = state.get("suggested_callback_script", None)
+        
+        if not location_text or confidence < 0.5:
+            location_text = "Unknown"
+            requires_callback = True
+            if "location" not in missing_fields:
+                missing_fields.append("location")
+            suggested_question = self.generate_follow_up(missing_fields)
+
         location = {
             "raw_text": location_text,
             "landmark": parsed_data.get("landmark", ""),
             "latitude": lat,
             "longitude": lon,
-            "confidence": 0.88 if location_text else 0.3,
+            "confidence": confidence,
         }
         incident_type = {
             "category": parsed_data.get("incident_category", "other"),
@@ -535,4 +555,7 @@ Instructions:
             "victim_count": parsed_data.get("victim_count", 1),
             "severity_clues": parsed_data.get("severity_indicators", []),
             "distress_score": distress_score,
+            "requires_callback": requires_callback,
+            "missing_fields": missing_fields,
+            "suggested_callback_script": suggested_question,
         }

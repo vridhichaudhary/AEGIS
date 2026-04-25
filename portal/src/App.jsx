@@ -9,12 +9,15 @@ import ThreatIntelligencePanel from './components/ThreatIntelligencePanel';
 import VoiceCommand from './components/VoiceCommand';
 import AARModal from './components/AARModal';
 import ReviewQueue from './components/ReviewQueue';
+import CallbackQueue from './components/CallbackQueue';
+import NovelScenarioLog from './components/NovelScenarioLog';
 import { connectWebSocket } from './utils/websocket';
 
 function App() {
   const [incidents, setIncidents] = useState([]);
   const [resources, setResources] = useState([]);
   const [agentEvents, setAgentEvents] = useState([]);
+  const [callbacks, setCallbacks] = useState([]);
   const [threatIntelligence, setThreatIntelligence] = useState(null);
   const [isLogoGlowing, setIsLogoGlowing] = useState(false);
   const [isGeneratingReport, setIsGeneratingReport] = useState(false);
@@ -113,8 +116,19 @@ function App() {
       }
     };
     
+    const loadCallbacks = async () => {
+      try {
+        const response = await fetch(`${apiBase}/api/v1/callbacks`);
+        const data = await response.json();
+        setCallbacks(data.callbacks || []);
+      } catch (error) {
+        console.error("Failed to load callbacks:", error);
+      }
+    };
+    
     loadHealth();
     loadResources();
+    loadCallbacks();
     const healthInterval = setInterval(loadHealth, 30000); // Every 30 seconds
 
     // WebSocket connection
@@ -211,6 +225,15 @@ function App() {
           timestamp: new Date().toISOString()
         }, ...prev].slice(0, 100));
       }
+      else if (data.type === 'callback_update') {
+        setCallbacks(prev => {
+          const filtered = prev.filter(c => c.incident_id !== data.payload.incident_id);
+          return [data.payload, ...filtered];
+        });
+      }
+      else if (data.type === 'callback_resolved') {
+        setCallbacks(prev => prev.filter(c => c.incident_id !== data.payload.incident_id));
+      }
     };
 
     return () => {
@@ -231,6 +254,29 @@ function App() {
     } catch (error) {
       console.error("Resolve failed:", error);
       alert("Failed to resolve incident.");
+    }
+  };
+
+  const handleSimulateCallbackResponse = async (incidentId) => {
+    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
+    const cb = callbacks.find(c => c.incident_id === incidentId);
+    let additionalInfo = "I am near Sector 14 market, right opposite to the big banyan tree.";
+    if (cb?.missing_fields?.includes("location")) {
+        additionalInfo = "I am at Sector 29 market, near the metro station.";
+    }
+    
+    try {
+      const response = await fetch(`${apiBase}/api/v1/callback/${incidentId}/response`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ additional_info: additionalInfo })
+      });
+      if (!response.ok) throw new Error("Failed to simulate callback response");
+    } catch (error) {
+      console.error("Simulation failed:", error);
+      alert("Failed to simulate callback response.");
     }
   };
 
@@ -367,6 +413,8 @@ function App() {
         <div className="lg:col-span-4 flex flex-col gap-4 overflow-y-auto min-h-0 pr-1 custom-scrollbar">
           <ThreatIntelligencePanel data={threatIntelligence} />
           <Metrics data={metrics} />
+          <CallbackQueue callbacks={callbacks} onSimulateResponse={handleSimulateCallbackResponse} />
+          <NovelScenarioLog incidents={incidents} />
           <ReviewQueue incidents={incidents} />
           <ResourceGrid resources={resources} prepositionOrders={threatIntelligence?.preposition_orders} />
           <AgentFeed events={agentEvents} />
