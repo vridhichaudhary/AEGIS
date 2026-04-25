@@ -19,10 +19,11 @@ import db.database as db
 app = FastAPI(title="AEGIS API", version="1.0.0")
 
 # CORS Setup
-origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()]
-if settings.ENVIRONMENT == "production":
-    # Allow any Vercel domain and the Render domain in production
-    origins.append("*") 
+origins = [
+    "https://aegis-mauve-six.vercel.app",
+    "http://localhost:5173",
+    "http://localhost:3000",
+]
 
 app.add_middleware(
     CORSMiddleware,
