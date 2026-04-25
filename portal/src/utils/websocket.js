@@ -3,17 +3,18 @@ const defaultWebSocketUrl = () => {
     return import.meta.env.VITE_WS_URL;
   }
 
-  const apiBase = import.meta.env.VITE_API_BASE_URL;
-  if (apiBase && apiBase.startsWith('http')) {
+  const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
+  if (apiBase.startsWith('http')) {
     const url = new URL(apiBase);
     const protocol = (url.protocol === 'https:' || !import.meta.env.DEV) ? 'wss:' : 'ws:';
-    return `${protocol}//${url.host}/ws/events`;
+    // Use /ws endpoint as per backend update
+    return `${protocol}//${url.host}/ws`;
   }
 
   // Fallback to window location
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = import.meta.env.DEV ? 'localhost:8000' : window.location.host;
-  return `${protocol}//${host}/ws/events`;
+  return `${protocol}//${host}/ws`;
 };
 
 export const connectWebSocket = (url = defaultWebSocketUrl()) => {

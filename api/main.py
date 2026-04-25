@@ -23,6 +23,7 @@ origins = [
     "https://aegis-mauve-six.vercel.app",
     "http://localhost:5173",
     "http://localhost:3000",
+    "*"  # Allow all for production debugging as requested
 ]
 
 app.add_middleware(
@@ -422,8 +423,8 @@ def serialize_incident(result: dict) -> dict:
     return {
         "incident_id": result["incident_id"],
         "priority": result["priority"],
-        "status": result["dispatch_status"],
-        "dispatch_status": result["dispatch_status"],
+        "status": result.get("status", result.get("dispatch_status", "pending")),
+        "dispatch_status": result.get("dispatch_status", "pending"),
         "timestamp": datetime.now().isoformat(),
         "location": result.get("location"),
         "incident_type": result.get("incident_type"),
@@ -589,7 +590,7 @@ async def whatsapp_webhook(request: dict):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-@app.websocket("/ws/events")
+@app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:

@@ -31,10 +31,11 @@ const MapView = ({ incidents = [], resources = [], focusOn = null }) => {
     if (!mapRef.current) return;
 
     try {
+      const center = [28.6139, 77.2090];
       mapInstance.current = L.map(mapRef.current, { 
         zoomControl: false,
         attributionControl: false 
-      }).setView([28.6139, 77.2090], 12);
+      }).setView(center, 12);
       
       // Light Professional Tiles (Voyager)
       layersRef.current.street = L.tileLayer('https://{s}.tile.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
@@ -169,7 +170,7 @@ const MapView = ({ incidents = [], resources = [], focusOn = null }) => {
 
   return (
     <div className="h-full w-full relative group">
-      <div ref={mapRef} className="h-full w-full z-0 bg-slate-100"></div>
+      <div ref={mapRef} className="h-full w-full z-0 bg-slate-100 min-h-[450px]"></div>
       
       {!isMapReady && (
         <div className="absolute inset-0 bg-white/80 backdrop-blur-sm z-10 flex items-center justify-center">
