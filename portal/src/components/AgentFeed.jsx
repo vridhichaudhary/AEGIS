@@ -3,15 +3,22 @@ import { Bell, BellOff, Terminal } from 'lucide-react';
 
 const ValidationPanel = ({ data }) => {
 
-  const { authenticity_score, reasoning, recommended_action } = data;
+  const { authenticity_score, reasoning, recommended_action, validation_method } = data;
   let colorClass = 'text-green-400 border-green-500/30';
-  if (authenticity_score < 40) colorClass = 'text-red-500 border-red-500/30';
+  if (authenticity_score < 45) colorClass = 'text-red-500 border-red-500/30';
   else if (authenticity_score < 70) colorClass = 'text-yellow-400 border-yellow-500/30';
 
   return (
     <div className={`mt-2 p-3 rounded-lg border ${colorClass.split(' ')[1]} bg-gray-900/50`}>
        <div className="flex justify-between items-center mb-2 border-b border-gray-700/50 pb-2">
-         <span className="text-xs font-bold text-gray-300 uppercase tracking-wider">Prank Detection</span>
+         <div className="flex flex-col">
+           <span className="text-xs font-bold text-gray-300 uppercase tracking-wider">Prank Detection</span>
+           {validation_method === 'rule_based' && (
+             <span className="text-[8px] text-amber-400 font-bold uppercase tracking-widest mt-0.5">
+               Validated by: Rule Engine
+             </span>
+           )}
+         </div>
          <div className="flex items-center gap-3">
             <span className={`text-[10px] font-bold ${colorClass.split(' ')[0]} uppercase tracking-widest`}>{recommended_action}</span>
             <div className={`text-sm font-mono font-bold ${colorClass.split(' ')[0]}`}>{authenticity_score}/100</div>

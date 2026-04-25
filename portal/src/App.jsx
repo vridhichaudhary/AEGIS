@@ -8,6 +8,7 @@ import SimulatorConsole from './components/SimulatorConsole';
 import ThreatIntelligencePanel from './components/ThreatIntelligencePanel';
 import VoiceCommand from './components/VoiceCommand';
 import AARModal from './components/AARModal';
+import ReviewQueue from './components/ReviewQueue';
 import { connectWebSocket } from './utils/websocket';
 
 function App() {
@@ -361,9 +362,10 @@ function App() {
         </div>
 
         {/* Right: Metrics + Resources + Feed */}
-        <div className="lg:col-span-4 flex flex-col gap-4 overflow-hidden min-h-0">
+        <div className="lg:col-span-4 flex flex-col gap-4 overflow-y-auto min-h-0 pr-1 custom-scrollbar">
           <ThreatIntelligencePanel data={threatIntelligence} />
           <Metrics data={metrics} />
+          <ReviewQueue incidents={incidents} />
           <ResourceGrid resources={resources} prepositionOrders={threatIntelligence?.preposition_orders} />
           <AgentFeed events={agentEvents} />
         </div>
