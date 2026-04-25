@@ -105,6 +105,7 @@ def serialize_incident(result: dict) -> dict:
         "incident_id": result["incident_id"],
         "priority": result["priority"],
         "status": result["dispatch_status"],
+        "dispatch_status": result["dispatch_status"],
         "timestamp": datetime.now().isoformat(),
         "location": result.get("location"),
         "incident_type": result.get("incident_type"),

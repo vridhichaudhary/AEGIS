@@ -35,7 +35,7 @@ const MapView = ({ incidents, resources }) => {
 
   // 1. Map Initialization
   useEffect(() => {
-    if (!mapInstance.current && mapRef.current) {
+    if (!mapInstance.current && mapRef.current && !mapRef.current._leaflet_id) {
       mapInstance.current = L.map(mapRef.current).setView([28.6139, 77.2090], 12);
       
       L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
