@@ -222,3 +222,25 @@ html, body, #root {
 .priority-border-p3 { border-left: 3px solid var(--aegis-medium)   !important; }
 .priority-border-p4 { border-left: 3px solid var(--aegis-low)      !important; }
 .priority-border-p5 { border-left: 3px solid var(--aegis-text-muted) !important; }
+
+/* ─── Panel Pulsing ─── */
+@keyframes panel-pulse-anim {
+  0%   { border-left-color: var(--aegis-accent); }
+  100% { border-left-color: transparent; }
+}
+.panel-pulse {
+  border-left: 2px solid var(--aegis-accent);
+  animation: panel-pulse-anim 3s ease-out forwards;
+}
+
+/* ─── Sidebar Sections ─── */
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid var(--aegis-border);
+  overflow: hidden;
+}
+
+.sidebar-section:last-child {
+  border-bottom: none;
+}

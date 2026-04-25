@@ -88,7 +88,7 @@ const CoordinationTimeline = ({ timings }) => {
   );
 };
 
-const PriorityQueue = ({ incidents, onResolve }) => {
+const PriorityQueue = ({ incidents, onResolve, onFocus }) => {
   const [activeTab, setActiveTab] = useState('ALL');
 
   const agencyFilter = (incident) => {
@@ -173,8 +173,9 @@ const PriorityQueue = ({ incidents, onResolve }) => {
             return (
               <div
                 key={incident.incident_id}
-                className={`card p-3 animate-slide-up flex flex-col relative ${isReviewQueue ? 'priority-border-p1 bg-aegis-critical/5' : priorityClass}`}
+                className={`card p-3 animate-slide-up flex flex-col relative cursor-pointer hover:border-aegis-accent transition-all ${isReviewQueue ? 'priority-border-p1 bg-aegis-critical/5' : priorityClass}`}
                 style={{ animationDelay: `${idx * 40}ms` }}
+                onClick={() => onFocus && onFocus(incident)}
               >
                 <div className="flex justify-between items-start mb-1.5">
                   <div className="flex items-center gap-2 flex-wrap">

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Layers, Map as MapIcon, Target, Navigation } from 'lucide-react';
+import { Layers, Map as MapIcon, Target, Navigation, ZoomIn, ZoomOut } from 'lucide-react';
 
 // Fix Leaflet default icon issues
 delete L.Icon.Default.prototype._getIconUrl;
@@ -11,7 +11,6 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-// Real resource depot coordinates from DispatchAgent
 const DEPOTS = [
   { id: 'ambulance', lat: 28.6328, lng: 77.2197, name: 'AIIMS Emergency Base', icon: '🏥' },
   { id: 'fire', lat: 28.6562, lng: 77.2410, name: 'Delhi Fire Station North', icon: '🚒' },
@@ -19,9 +18,10 @@ const DEPOTS = [
   { id: 'rescue', lat: 28.5672, lng: 77.3210, name: 'NDRF Base Camp', icon: '🚁' },
 ];
 
-const MapView = ({ incidents, resources }) => {
+const MapView = ({ incidents = [], resources = [], focusOn = null }) => {
   const mapRef = useRef(null);
   const mapInstance = useRef(null);
+  const layersRef = useRef({ street: null, satellite: null });
   
   const markersRef = useRef({ incidents: {}, resources: {}, depots: [], coverage: [], routes: {} });
   const resourceState = useRef(new Map());
@@ -35,18 +35,28 @@ const MapView = ({ incidents, resources }) => {
 
   const [showCoverage, setShowCoverage] = useState(false);
   const [showRoutes, setShowRoutes] = useState(true);
+  const [mapLayer, setMapLayer] = useState('street');
 
-  // 1. Map Initialization
+  // Handle Focus
   useEffect(() => {
-    if (!mapInstance.current && mapRef.current && !mapRef.current._leaflet_id) {
+    if (mapInstance.current && focusOn) {
+      mapInstance.current.flyTo([focusOn.lat, focusOn.lng], 15, { animate: true, duration: 1.5 });
+    }
+  }, [focusOn]);
+
+  useEffect(() => {
+    if (!mapInstance.current && mapRef.current) {
       mapInstance.current = L.map(mapRef.current, { zoomControl: false }).setView([28.6139, 77.2090], 12);
       
-      L.tileLayer('https://{s}.tile.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      layersRef.current.street = L.tileLayer('https://{s}.tile.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
         attribution: '© OpenStreetMap © CARTO',
         maxZoom: 18,
       }).addTo(mapInstance.current);
 
-      L.control.zoom({ position: 'bottomright' }).addTo(mapInstance.current);
+      layersRef.current.satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles © Esri',
+        maxZoom: 18,
+      });
 
       // Add Depot Markers
       DEPOTS.forEach(depot => {
@@ -67,7 +77,18 @@ const MapView = ({ incidents, resources }) => {
     };
   }, []);
 
-  // 2. Geocoding Queue Processor
+  // Layer Toggle
+  useEffect(() => {
+    if (!mapInstance.current) return;
+    if (mapLayer === 'satellite') {
+      mapInstance.current.removeLayer(layersRef.current.street);
+      layersRef.current.satellite.addTo(mapInstance.current);
+    } else {
+      mapInstance.current.removeLayer(layersRef.current.satellite);
+      layersRef.current.street.addTo(mapInstance.current);
+    }
+  }, [mapLayer]);
+
   const processGeocodeQueue = async () => {
     if (isGeocoding.current || geocodeQueue.current.length === 0) return;
     isGeocoding.current = true;
@@ -100,11 +121,10 @@ const MapView = ({ incidents, resources }) => {
     isGeocoding.current = false;
   };
 
-  // 3. Incident Marker Rendering
   useEffect(() => {
     if (!mapInstance.current) return;
     incidents.forEach(incident => {
-      if (incident.dispatch_status === 'completed' || incident.dispatch_status === 'merged_duplicate') return;
+      if (incident.dispatch_status === 'completed' || incident.dispatch_status === 'merged_duplicate' || incident.incident_status === 'RESOLVED') return;
       const locString = incident.location?.raw_text;
       if (locString && !resolvedIncidents.current.has(incident.incident_id)) {
         if (!geocodeQueue.current.some(q => q.id === incident.incident_id)) {
@@ -143,7 +163,6 @@ const MapView = ({ incidents, resources }) => {
           <div class="text-[11px] leading-relaxed text-aegis-text-primary">
             <div class="font-bold mb-1">${incident.incident_type?.category?.replace('_', ' ') || 'EMERGENCY'}</div>
             <div class="text-aegis-text-secondary">${incident.location?.raw_text || 'LOCATION UNKNOWN'}</div>
-            ${incident.assigned_resources?.[0]?.eta_minutes ? `<div class="mt-2 text-aegis-info font-bold mono">ETA: ${incident.assigned_resources[0].eta_minutes} MIN</div>` : ''}
           </div>
         </div>
       `);
@@ -151,7 +170,6 @@ const MapView = ({ incidents, resources }) => {
     });
   }, [incidents, forceUpdate]);
 
-  // 4. Resource Animation
   const animateResources = () => {
     const TRAVEL_SPEED = 0.0001;
     resourceState.current.forEach((resData) => {
@@ -216,7 +234,6 @@ const MapView = ({ incidents, resources }) => {
     if (!animationRef.current) animationRef.current = requestAnimationFrame(animateResources);
   }, [resources, showRoutes]);
 
-  // Toggle Visibility
   useEffect(() => {
     if (!mapInstance.current) return;
     markersRef.current.coverage.forEach(layer => mapInstance.current.removeLayer(layer));
@@ -227,55 +244,46 @@ const MapView = ({ incidents, resources }) => {
         markersRef.current.coverage.push(circle);
       });
     }
-    Object.keys(markersRef.current.routes).forEach(key => {
-      if (!showRoutes) mapInstance.current.removeLayer(markersRef.current.routes[key]);
-      else markersRef.current.routes[key].addTo(mapInstance.current);
-    });
-  }, [showCoverage, showRoutes]);
+  }, [showCoverage]);
 
   return (
-    <div className="card-flush flex flex-col h-full bg-aegis-bg-surface overflow-hidden relative" style={{ height: '62vh' }}>
-      <div className="section-header flex justify-between items-center">
+    <div className="h-full w-full relative flex flex-col overflow-hidden">
+      {/* Map Header Controls */}
+      <div className="section-header absolute top-0 left-0 right-0 z-20 flex justify-between items-center bg-aegis-bg-base/80 backdrop-blur-md">
         <div className="flex items-center gap-2">
           <MapIcon size={14} className="text-aegis-info" />
-          <span>Operational GIS View</span>
+          <span>Tactical GIS Command View</span>
         </div>
         <div className="flex gap-2">
-          <button 
-            onClick={() => setShowRoutes(!showRoutes)}
-            className={`btn btn-xs ${showRoutes ? 'btn-primary' : 'btn-ghost'}`}
-          >
-            <Navigation size={10} className="mr-1" /> Routes
+          <button onClick={() => setMapLayer(mapLayer === 'street' ? 'satellite' : 'street')} className="btn btn-xs btn-ghost">
+            <Layers size={10} className="mr-1" /> {mapLayer === 'street' ? 'Satellite' : 'Street'}
           </button>
-          <button 
-            onClick={() => setShowCoverage(!showCoverage)}
-            className={`btn btn-xs ${showCoverage ? 'btn-primary' : 'btn-ghost'}`}
-          >
+          <button onClick={() => setShowCoverage(!showCoverage)} className={`btn btn-xs ${showCoverage ? 'btn-primary' : 'btn-ghost'}`}>
             <Target size={10} className="mr-1" /> Coverage
           </button>
         </div>
       </div>
-      
-      <div ref={mapRef} className="flex-1 bg-aegis-bg-base relative z-0"></div>
-      
+
+      <div ref={mapRef} className="flex-1 z-0"></div>
+
+      {/* Floating Zoom Controls */}
+      <div className="absolute bottom-6 right-6 z-20 flex flex-col gap-2">
+        <button onClick={() => mapInstance.current?.zoomIn()} className="btn btn-ghost bg-aegis-bg-surface/80 p-2 border-aegis-border shadow-xl backdrop-blur-md">
+          <ZoomIn size={16} />
+        </button>
+        <button onClick={() => mapInstance.current?.zoomOut()} className="btn btn-ghost bg-aegis-bg-surface/80 p-2 border-aegis-border shadow-xl backdrop-blur-md">
+          <ZoomOut size={16} />
+        </button>
+      </div>
+
       {/* Tactical Legend */}
-      <div className="absolute bottom-6 left-6 bg-aegis-bg-elevated/90 border border-aegis-border p-3 rounded shadow-2xl z-10 backdrop-blur-md min-w-[140px]">
-        <div className="flex flex-col gap-2.5">
-          <div className="flex items-center justify-between border-b border-aegis-border pb-1.5 mb-0.5">
-            <span className="text-[9px] font-bold text-aegis-text-muted uppercase tracking-widest">Map Legend</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="status-dot status-dot-offline"></span> 
-            <span className="text-[10px] text-aegis-text-secondary mono font-bold">CRITICAL (P1/P2)</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="status-dot status-dot-warning"></span> 
-            <span className="text-[10px] text-aegis-text-secondary mono font-bold">SERIOUS (P3)</span>
-          </div>
-          <div className="divider my-0"></div>
-          <div className="flex items-center gap-2"><span className="text-xs">🚑</span> <span className="text-[10px] text-aegis-text-secondary font-bold">AMBULANCE</span></div>
-          <div className="flex items-center gap-2"><span className="text-xs">🚒</span> <span className="text-[10px] text-aegis-text-secondary font-bold">FIRE UNIT</span></div>
-          <div className="flex items-center gap-2"><span className="text-xs">🚓</span> <span className="text-[10px] text-aegis-text-secondary font-bold">POLICE UNIT</span></div>
+      <div className="absolute bottom-6 left-6 bg-aegis-bg-elevated/90 border border-aegis-border p-3 rounded shadow-2xl z-10 backdrop-blur-md min-w-[120px]">
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2"><span className="status-dot status-dot-offline"></span><span className="text-[10px] mono font-bold">P1/P2 ALERT</span></div>
+          <div className="flex items-center gap-2"><span className="status-dot status-dot-warning"></span><span className="text-[10px] mono font-bold">P3 SERIOUS</span></div>
+          <div className="divider my-0.5"></div>
+          <div className="flex items-center gap-2 text-[10px] font-bold"><span className="text-xs">🚑</span> AMBULANCE</div>
+          <div className="flex items-center gap-2 text-[10px] font-bold"><span className="text-xs">🚒</span> FIRE UNIT</div>
         </div>
       </div>
     </div>
