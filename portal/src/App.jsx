@@ -142,6 +142,16 @@ function App() {
     setIsPanelOpen(true);
   };
 
+  const handleStartDemo = async (speed = 1.0) => {
+    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : 'https://aegis-5lpx.onrender.com');
+    await fetch(`${apiBase}/api/v1/demo/start?speed=${speed}`);
+  };
+
+  const handleStopDemo = async () => {
+    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : 'https://aegis-5lpx.onrender.com');
+    await fetch(`${apiBase}/api/v1/demo/stop`, { method: 'POST' });
+  };
+
   return (
     <>
       <DashboardLayout
@@ -196,7 +206,7 @@ function App() {
         }
         topLeft={
           <div className="h-full flex flex-col">
-            <div className="section-header">Tactical Response Map</div>
+            <div className="section-header">Live Incident Map</div>
             <div className="flex-1 min-h-0">
                <MapView incidents={incidents} resources={resources} focusOn={mapFocus} />
             </div>
@@ -213,9 +223,9 @@ function App() {
         }
         bottomLeft={
           <div className="h-full flex flex-col">
-            <div className="section-header">Agent Intelligence Trail</div>
+            <div className="section-header">Testing Console & Agent Intelligence</div>
             <div className="flex-1 overflow-hidden flex flex-col">
-              <div className="h-1/3 border-b border-slate-100">
+              <div className="h-1/2 border-b border-slate-100">
                 <SimulatorConsole />
               </div>
               <div className="flex-1 overflow-y-auto">
@@ -226,7 +236,7 @@ function App() {
         }
         bottomRight={
           <div className="h-full flex flex-col">
-            <div className="section-header">Resource & Hospital Logistics</div>
+            <div className="section-header">Resources & Facilities</div>
             <div className="flex-1 overflow-hidden flex flex-col p-4 gap-4">
                <div className="flex-1 overflow-y-auto border border-slate-100 rounded-xl bg-slate-50/50">
                  <ResourceGrid resources={resources} />
@@ -250,6 +260,8 @@ function App() {
             <DemoController 
               activeStep={demoStep}
               isRunning={isDemoRunning}
+              onStart={handleStartDemo}
+              onStop={handleStopDemo}
             />
           </>
         }

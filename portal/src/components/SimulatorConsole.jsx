@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Phone, PhoneCall, Radio, Activity, Mic, UploadCloud, Loader, RefreshCw, AudioWaveform } from 'lucide-react';
+import React, { useState, useRef } from 'react';
+import { PhoneCall, Mic, UploadCloud, Loader, Send, Activity, FileAudio } from 'lucide-react';
 
 const transcripts = [
   "Help, aag lag gayi hai Sector 14 market mein, 3 log fas gaye hain ander!",
@@ -10,38 +10,77 @@ const transcripts = [
 ];
 
 const SimulatorConsole = () => {
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [displayedText, setDisplayedText] = useState('');
-  const [status, setStatus] = useState('idle'); // incoming, transcribing, processing, completed, idle
-  const [callerId, setCallerId] = useState('+91-112-84739201');
-  const [isAudioMode, setIsAudioMode] = useState(false);
+  const [textInput, setTextInput] = useState('');
+  const [status, setStatus] = useState('idle'); // idle, processing, completed, error
+  const [activeTab, setActiveTab] = useState('text'); // text, audio, random
+  const [feedback, setFeedback] = useState('');
   const fileInputRef = useRef(null);
-  
-  const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
 
-  const handleReport = async (transcriptText, cid) => {
+  const PRODUCTION_BACKEND = 'https://aegis-5lpx.onrender.com';
+  const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : PRODUCTION_BACKEND);
+
+  const generateCallerId = () => `+91-112-${Math.floor(10000000 + Math.random() * 90000000)}`;
+
+  const handleSubmitText = async (e) => {
+    e?.preventDefault();
+    if (!textInput.trim()) return;
+    
+    setStatus('processing');
+    setFeedback('Processing text report...');
+    const cid = generateCallerId();
+
     try {
-      await fetch(`${apiBase}/api/v1/emergency/report`, {
+      const response = await fetch(`${apiBase}/api/v1/emergency/report`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcript: transcriptText, caller_id: cid }),
+        body: JSON.stringify({ transcript: textInput, caller_id: cid }),
       });
+      if (!response.ok) throw new Error("Failed to submit");
+      setStatus('completed');
+      setFeedback('Incident successfully reported!');
+      setTextInput('');
     } catch (error) {
       console.error("Failed to submit:", error);
+      setStatus('error');
+      setFeedback('Error reporting incident. Check backend connection.');
     }
+    resetStatus();
+  };
+
+  const handleRandomScenario = async () => {
+    const randomText = transcripts[Math.floor(Math.random() * transcripts.length)];
+    setTextInput(randomText);
+    setStatus('processing');
+    setFeedback(`Processing: "${randomText}"`);
+    const cid = generateCallerId();
+
+    try {
+      const response = await fetch(`${apiBase}/api/v1/emergency/report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript: randomText, caller_id: cid }),
+      });
+      if (!response.ok) throw new Error("Failed to submit");
+      setStatus('completed');
+      setFeedback('Random incident triggered!');
+      setTextInput('');
+    } catch (error) {
+      console.error("Failed to submit:", error);
+      setStatus('error');
+      setFeedback('Error reporting incident.');
+    }
+    resetStatus();
   };
 
   const processAudioFile = async (file) => {
     if (!file) return;
-    setIsAudioMode(true);
-    const newCallerId = `+91-112-${Math.floor(10000000 + Math.random() * 90000000)}`;
-    setCallerId(newCallerId);
-    setDisplayedText('');
-    setStatus('transcribing');
+    setStatus('processing');
+    setFeedback(`Uploading and transcribing: ${file.name}`);
+    const cid = generateCallerId();
 
     const formData = new FormData();
     formData.append("audio", file);
-    formData.append("caller_id", newCallerId);
+    formData.append("caller_id", cid);
 
     try {
       const response = await fetch(`${apiBase}/api/v1/emergency/audio`, {
@@ -49,114 +88,129 @@ const SimulatorConsole = () => {
         body: formData,
       });
       if (!response.ok) throw new Error("Failed to process audio.");
-      const data = await response.json();
-      const transcript = data.agent_trail[0]?.reasoning || "Audio processed successfully.";
-      setDisplayedText(transcript);
-      setStatus('processing');
-      setTimeout(() => {
-        setStatus('completed');
-        setTimeout(() => { setStatus('idle'); setIsAudioMode(false); if (fileInputRef.current) fileInputRef.current.value = ""; }, 3000);
-      }, 1000);
-    } catch (error) {
-      setDisplayedText("Error transcribing audio.");
       setStatus('completed');
-      setTimeout(() => { setStatus('idle'); setIsAudioMode(false); }, 3000);
+      setFeedback('Audio processed and incident created!');
+    } catch (error) {
+      console.error(error);
+      setStatus('error');
+      setFeedback("Error transcribing audio.");
     }
+    if (fileInputRef.current) fileInputRef.current.value = "";
+    resetStatus();
   };
 
-  useEffect(() => {
-    if (isAudioMode) return;
-    let timeout;
-    if (status === 'idle') {
-      timeout = setTimeout(() => {
-        setCurrentIndex((prev) => (prev + 1) % transcripts.length);
-        setCallerId(`+91-112-${Math.floor(10000000 + Math.random() * 90000000)}`);
-        setDisplayedText('');
-        setStatus('incoming');
-      }, 30000);
-    } else if (status === 'incoming') {
-      timeout = setTimeout(() => setStatus('transcribing'), 1500);
-    } else if (status === 'transcribing') {
-      const fullText = transcripts[currentIndex];
-      if (displayedText.length < fullText.length) {
-        timeout = setTimeout(() => setDisplayedText(fullText.slice(0, displayedText.length + 1)), 40);
-      } else {
-        timeout = setTimeout(() => setStatus('processing'), 500);
-      }
-    } else if (status === 'processing') {
-      handleReport(transcripts[currentIndex], callerId).finally(() => setStatus('completed'));
-    } else if (status === 'completed') {
-      timeout = setTimeout(() => setStatus('idle'), 2000);
-    }
-    return () => clearTimeout(timeout);
-  }, [status, displayedText, currentIndex, callerId, isAudioMode]);
+  const resetStatus = () => {
+    setTimeout(() => {
+      setStatus('idle');
+      setFeedback('');
+    }, 4000);
+  };
 
   return (
-    <div className="flex flex-col h-full bg-slate-50 border-b border-slate-100">
-      <div className="px-5 py-4 flex flex-1 flex-col">
-        {status !== 'idle' ? (
-          <div className="flex flex-col h-full animate-slide-up">
-            <div className="flex justify-between items-center mb-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-teal-100 flex items-center justify-center text-teal-700 animate-pulse">
-                  <PhoneCall size={20} />
-                </div>
-                <div className="flex flex-col">
-                  <span className="text-sm font-bold text-slate-800">{callerId}</span>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase">Incoming Call</span>
-                </div>
-              </div>
-              <span className={`px-2 py-0.5 rounded text-[10px] font-black tracking-widest ${
-                status === 'incoming' ? 'bg-red-50 text-red-600' : 
-                status === 'transcribing' ? 'bg-teal-50 text-teal-600' : 
-                'bg-blue-50 text-blue-600'
-              }`}>
-                {status.toUpperCase()}
-              </span>
-            </div>
+    <div className="flex flex-col h-full bg-white border-t border-slate-200 overflow-hidden">
+      <div className="bg-slate-50 border-b border-slate-200 px-4 py-2 flex justify-between items-center">
+        <h3 className="font-bold text-slate-800 flex items-center gap-2 text-sm">
+          <Activity size={16} className="text-teal-600" />
+          Test Input Console
+        </h3>
+        {status !== 'idle' && (
+          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full flex items-center gap-1 uppercase tracking-widest ${
+            status === 'processing' ? 'bg-blue-100 text-blue-700' :
+            status === 'completed' ? 'bg-teal-100 text-teal-700' :
+            'bg-red-100 text-red-700'
+          }`}>
+            {status === 'processing' && <Loader size={10} className="animate-spin" />}
+            {status === 'processing' ? 'Processing' : status === 'completed' ? 'Success' : 'Error'}
+          </span>
+        )}
+      </div>
 
-            <div className="flex-1 bg-white rounded-2xl border border-slate-100 p-5 shadow-sm flex flex-col items-center justify-center relative overflow-hidden">
-               <div className="flex items-end gap-1 mb-4 h-6">
-                  {[...Array(12)].map((_, i) => (
-                    <div 
-                      key={i} 
-                      className={`w-1.5 rounded-full bg-teal-500/20 ${status === 'transcribing' ? 'animate-waveform' : ''}`} 
-                      style={{ height: `${20 + Math.random() * 80}%`, animationDelay: `${i * 0.1}s`, animationDuration: '0.6s' }} 
-                    />
-                  ))}
-               </div>
-               <p className="text-sm text-slate-700 italic text-center font-medium leading-relaxed px-4">
-                "{displayedText || '...'}"
-               </p>
+      <div className="flex border-b border-slate-100">
+        <button 
+          onClick={() => setActiveTab('text')}
+          className={`flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider ${activeTab === 'text' ? 'bg-teal-50 text-teal-700 border-b-2 border-teal-500' : 'text-slate-500 hover:bg-slate-50'}`}
+        >
+          Text Input
+        </button>
+        <button 
+          onClick={() => setActiveTab('audio')}
+          className={`flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider ${activeTab === 'audio' ? 'bg-teal-50 text-teal-700 border-b-2 border-teal-500' : 'text-slate-500 hover:bg-slate-50'}`}
+        >
+          Audio
+        </button>
+        <button 
+          onClick={() => setActiveTab('random')}
+          className={`flex-1 py-1.5 text-[10px] font-bold uppercase tracking-wider ${activeTab === 'random' ? 'bg-teal-50 text-teal-700 border-b-2 border-teal-500' : 'text-slate-500 hover:bg-slate-50'}`}
+        >
+          Random
+        </button>
+      </div>
+
+      <div className="flex-1 p-3 flex flex-col justify-start overflow-y-auto">
+        {activeTab === 'text' && (
+          <form onSubmit={handleSubmitText} className="flex flex-col gap-2 h-full">
+            <textarea
+              className="flex-1 p-2 border border-slate-200 rounded-lg resize-none focus:ring-2 focus:ring-teal-500 focus:border-transparent outline-none text-xs text-slate-700"
+              placeholder="Type emergency transcript here..."
+              value={textInput}
+              onChange={(e) => setTextInput(e.target.value)}
+              disabled={status === 'processing'}
+              style={{ minHeight: '80px' }}
+            />
+            <button 
+              type="submit" 
+              disabled={!textInput.trim() || status === 'processing'}
+              className="btn btn-primary w-full shadow-lg shadow-teal-500/20 disabled:opacity-50 disabled:shadow-none py-1.5 text-xs flex justify-center items-center gap-2 rounded-lg"
+            >
+              <Send size={14} /> Submit Report
+            </button>
+          </form>
+        )}
+
+        {activeTab === 'audio' && (
+          <div className="flex flex-col items-center justify-center h-full gap-3 border-2 border-dashed border-slate-200 rounded-lg p-4 bg-slate-50">
+            <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center shadow-sm border border-slate-100 text-slate-400">
+              <FileAudio size={24} />
             </div>
+            <div className="text-center">
+              <p className="text-[10px] text-slate-500 mt-1 max-w-[150px]">Supports .wav, .mp3, .m4a. Powered by Whisper.</p>
+            </div>
+            <input type="file" accept="audio/*" className="hidden" ref={fileInputRef} onChange={(e) => processAudioFile(e.target.files[0])} />
+            <button 
+              onClick={() => fileInputRef.current?.click()}
+              disabled={status === 'processing'}
+              className="btn btn-ghost border border-slate-300 hover:bg-slate-100 hover:text-teal-600 disabled:opacity-50 text-xs flex items-center gap-2 px-4 py-1.5 rounded-lg"
+            >
+              <UploadCloud size={14} /> Choose File
+            </button>
           </div>
-        ) : (
-          <div className="flex flex-col items-center justify-center h-full gap-4">
-             <div className="flex flex-col items-center">
-                <div className="w-12 h-12 rounded-full bg-slate-100 flex items-center justify-center text-slate-400 mb-3">
-                  <AudioWaveform size={24} />
-                </div>
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Pipeline Idle</span>
-             </div>
-             
-             <div className="flex gap-3 w-full max-w-xs">
-                <button 
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex-1 btn btn-ghost justify-center border-dashed border-2 hover:border-teal-500 hover:text-teal-600 transition-all"
-                >
-                  <UploadCloud size={16} />
-                  <span>Upload</span>
-                </button>
-                <input type="file" className="hidden" ref={fileInputRef} onChange={(e) => processAudioFile(e.target.files[0])} />
-                
-                <button 
-                  onClick={() => setStatus('incoming')}
-                  className="flex-1 btn btn-primary justify-center shadow-lg shadow-teal-700/20"
-                >
-                  <PhoneCall size={16} />
-                  <span>Test Call</span>
-                </button>
-             </div>
+        )}
+
+        {activeTab === 'random' && (
+          <div className="flex flex-col items-center justify-center h-full gap-3 border border-slate-100 rounded-lg p-4 bg-slate-50">
+            <div className="text-center">
+              <div className="w-12 h-12 mx-auto bg-teal-100 rounded-full flex items-center justify-center text-teal-600 mb-2 shadow-sm border border-teal-200">
+                <PhoneCall size={20} />
+              </div>
+              <p className="text-[10px] text-slate-500 mt-1">Triggers a pre-configured multi-lingual test call.</p>
+            </div>
+            <button 
+              onClick={handleRandomScenario}
+              disabled={status === 'processing'}
+              className="btn btn-primary shadow-lg shadow-teal-500/20 disabled:opacity-50 px-4 py-1.5 text-xs flex items-center gap-2 rounded-lg"
+            >
+              <Activity size={14} /> Trigger Random
+            </button>
+          </div>
+        )}
+
+        {feedback && (
+          <div className={`mt-2 p-2 rounded text-[10px] text-center border font-semibold animate-slide-up ${
+            status === 'error' ? 'bg-red-50 border-red-200 text-red-600' : 
+            status === 'processing' ? 'bg-blue-50 border-blue-200 text-blue-600' :
+            'bg-teal-50 border-teal-200 text-teal-700'
+          }`}>
+            {feedback}
           </div>
         )}
       </div>
