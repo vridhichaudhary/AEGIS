@@ -13,6 +13,7 @@ from agents.command_agent import CommandAgent
 from agents.report_agent import ReportAgent
 from config.settings import settings
 from simulation.scenarios import SimulationScenarios
+import db.database as db
 
 app = FastAPI(title="AEGIS API", version="1.0.0")
 
@@ -85,6 +86,15 @@ async def resource_refresh_loop():
 
 @app.on_event("startup")
 async def startup_event():
+    # Initialize SQLite database
+    db.init_db()
+    
+    # Hydrate in-memory state
+    history = db.get_all_incidents(limit=100)
+    for inc in history:
+        if inc["status"] != "RESOLVED" and inc["status"] != "merged_duplicate":
+            active_incidents[inc["incident_id"]] = inc
+
     asyncio.create_task(proactive_threat_loop())
     asyncio.create_task(resource_refresh_loop())
 
@@ -198,6 +208,9 @@ async def publish_result(result: dict):
                 }
             })
 
+    # Save to SQLite asynchronously
+    asyncio.create_task(asyncio.to_thread(db.save_incident, incident_payload))
+
 
 @app.get("/health")
 async def health_check():
@@ -291,6 +304,9 @@ async def resolve_incident(incident_id: str):
             })
         await manager.broadcast({"type": "resource_update", "payload": updates})
 
+    # Update SQLite asynchronously
+    asyncio.create_task(asyncio.to_thread(db.update_incident_status, incident_id, "RESOLVED"))
+
     return {"status": "success", "resolved_id": incident_id, "freed": len(released_ids)}
 
 @app.get("/api/v1/resources")
@@ -308,6 +324,18 @@ async def get_resources():
                 "location": t["location"]
             })
     return {"resources": all_res}
+
+@app.get("/api/v1/incidents/history")
+async def get_incident_history(limit: int = 50):
+    # Run DB fetch in background thread
+    history = await asyncio.to_thread(db.get_all_incidents, limit)
+    return {"incidents": history}
+
+@app.get("/api/v1/metrics/snapshot")
+async def get_metrics_snapshot():
+    # Run DB fetch in background thread
+    metrics = await asyncio.to_thread(db.get_metrics)
+    return metrics
 
 @app.post("/api/v1/emergency/report", response_model=EmergencyCallResponse)
 async def report_emergency(request: EmergencyCallRequest):
