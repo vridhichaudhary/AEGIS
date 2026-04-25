@@ -25,37 +25,40 @@ class JointDispatchMemo(BaseModel):
 class DispatchAgent(BaseAgent):
     """Dispatches safely, with explicit hold states when location is missing."""
 
-    _fallback_resources = {
+    # Resource templates — NEVER mutate this directly; always deep-copy per request
+    _RESOURCE_TEMPLATES = {
         "ambulance": [
-            {"resource_id": "AMB-101", "status": "available", "location": "Central Depot"},
-            {"resource_id": "AMB-102", "status": "available", "location": "North Depot"},
-            {"resource_id": "AMB-103", "status": "available", "location": "South Depot"},
+            {"resource_id": "AMB-101", "location": "Central Depot"},
+            {"resource_id": "AMB-102", "location": "North Depot"},
+            {"resource_id": "AMB-103", "location": "South Depot"},
         ],
         "ambulance_cardiac": [
-            {"resource_id": "CARD-201", "status": "available", "location": "Cardiac Center"},
-            {"resource_id": "CARD-202", "status": "available", "location": "Metro Cardiac Unit"},
+            {"resource_id": "CARD-201", "location": "Cardiac Center"},
+            {"resource_id": "CARD-202", "location": "Metro Cardiac Unit"},
         ],
         "ambulance_trauma": [
-            {"resource_id": "TRM-301", "status": "available", "location": "Trauma Center"},
-            {"resource_id": "TRM-302", "status": "available", "location": "West Trauma Base"},
+            {"resource_id": "TRM-301", "location": "Trauma Center"},
+            {"resource_id": "TRM-302", "location": "West Trauma Base"},
         ],
         "fire_truck": [
-            {"resource_id": "FIR-401", "status": "available", "location": "Fire Station 1"},
-            {"resource_id": "FIR-402", "status": "available", "location": "Fire Station 2"},
+            {"resource_id": "FIR-401", "location": "Fire Station 1"},
+            {"resource_id": "FIR-402", "location": "Fire Station 2"},
         ],
         "fire_truck_rescue": [
-            {"resource_id": "FIR-451", "status": "available", "location": "Rescue Station"},
-            {"resource_id": "FIR-452", "status": "available", "location": "Rescue Station 2"},
+            {"resource_id": "FIR-451", "location": "Rescue Station"},
+            {"resource_id": "FIR-452", "location": "Rescue Station 2"},
         ],
         "police": [
-            {"resource_id": "POL-501", "status": "available", "location": "Police HQ"},
-            {"resource_id": "POL-502", "status": "available", "location": "North Police HQ"},
+            {"resource_id": "POL-501", "location": "Police HQ"},
+            {"resource_id": "POL-502", "location": "North Police HQ"},
         ],
         "rescue_team": [
-            {"resource_id": "RSC-601", "status": "available", "location": "Disaster Response Base"},
-            {"resource_id": "RSC-602", "status": "available", "location": "River Rescue Base"},
+            {"resource_id": "RSC-601", "location": "Disaster Response Base"},
+            {"resource_id": "RSC-602", "location": "River Rescue Base"},
         ],
     }
+    # Per-process assignment registry; tracks which resource IDs are dispatched
+    _assigned_incidents: Dict[str, str] = {}  # resource_id -> incident_id
 
     def __init__(self):
         super().__init__(temperature=0)
@@ -77,6 +80,7 @@ class DispatchAgent(BaseAgent):
                 self.redis_client = None
 
     async def query_available_resources(self, resource_type: str) -> List[Dict]:
+        """Returns fresh copies of available units, filtered against the assignment registry."""
         if self.redis_client is not None:
             try:
                 available = []
@@ -91,12 +95,25 @@ class DispatchAgent(BaseAgent):
                     return available
             except Exception:
                 pass
-        return [resource.copy() for resource in self._fallback_resources.get(resource_type, []) if resource["status"] == "available"]
+
+        # FIXED: produce fresh dict copies; filter via assignment registry, not mutable status field
+        templates = self._RESOURCE_TEMPLATES.get(resource_type, [])
+        return [
+            {**t, "status": "available"}
+            for t in templates
+            if t["resource_id"] not in self._assigned_incidents
+        ]
 
     def calculate_mock_eta(self, resource: Dict, destination: Dict) -> float:
-        return random.uniform(3.0, 15.0)
+        """ETA heuristic: base 4-8 min urban, +penalty if no location."""
+        if destination and destination.get("raw_text"):
+            base = random.uniform(4.0, 8.0)   # urban Delhi response
+        else:
+            base = random.uniform(8.0, 15.0)  # unknown location penalty
+        return round(base, 1)
 
     async def assign_resource(self, resource_id: str, incident_id: str):
+        """Mark resource as dispatched in the registry (does not mutate template pool)."""
         if self.redis_client is not None:
             try:
                 keys = self.redis_client.keys(f"resource:*:{resource_id}")
@@ -111,13 +128,8 @@ class DispatchAgent(BaseAgent):
             except Exception:
                 pass
 
-        for resources in self._fallback_resources.values():
-            for resource in resources:
-                if resource["resource_id"] == resource_id:
-                    resource["status"] = "dispatched"
-                    resource["assigned_incident"] = incident_id
-                    resource["dispatch_time"] = datetime.now().isoformat()
-                    return
+        # FIXED: register assignment without touching template pool
+        self._assigned_incidents[resource_id] = incident_id
 
     async def process(self, state: dict) -> dict:
         requirements = state["resource_requirements"]

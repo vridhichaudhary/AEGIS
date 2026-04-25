@@ -10,6 +10,7 @@ from agents.supervisor import SupervisorAgent
 from agents.base_agent import BaseAgent
 from agents.cascade_agent import CascadePredictionAgent
 from agents.command_agent import CommandAgent
+from agents.report_agent import ReportAgent
 from config.settings import settings
 from simulation.scenarios import SimulationScenarios
 
@@ -52,6 +53,7 @@ manager = ConnectionManager()
 supervisor = SupervisorAgent()
 cascade_agent = CascadePredictionAgent()
 command_agent = CommandAgent()
+report_agent = ReportAgent()
 active_incidents: Dict[str, dict] = {}
 
 
@@ -75,6 +77,12 @@ async def startup_event():
 class EmergencyCallRequest(BaseModel):
     transcript: str
     caller_id: Optional[str] = None
+
+    model_config = {"str_strip_whitespace": True}
+
+    def validate_transcript(self):
+        if not self.transcript or len(self.transcript.strip()) < 3:
+            raise ValueError("Transcript must be at least 3 characters.")
 
 
 class CommandAgentRequest(BaseModel):
@@ -192,26 +200,35 @@ async def process_voice_command(request: CommandAgentRequest):
         raise HTTPException(status_code=500, detail=str(exc))
 
 
-from agents.report_agent import ReportAgent
-
-report_agent = ReportAgent()
-
 @app.get("/api/v1/report/generate")
 async def generate_aar():
     recent = list(active_incidents.values())
     if not recent:
-        raise HTTPException(status_code=400, detail="No incidents to report on.")
+        raise HTTPException(status_code=400, detail="No incidents to report on. Run a simulation first.")
     
+    # Cap at 30 most-recent incidents to avoid LLM token limits
+    capped = recent[-30:]
     try:
-        report = await report_agent.generate_report(recent)
+        report = await report_agent.generate_report(capped)
         if not report:
-            raise HTTPException(status_code=500, detail="Failed to generate report.")
+            raise HTTPException(
+                status_code=429,
+                detail="LLM rate limit reached or provider unavailable. Please try again in a few minutes."
+            )
         return report
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+        err_str = str(exc)
+        if "429" in err_str or "rate_limit" in err_str.lower():
+            raise HTTPException(status_code=429, detail="LLM daily token limit reached. Try again in a few minutes.")
+        raise HTTPException(status_code=500, detail=err_str)
 
 @app.post("/api/v1/emergency/report", response_model=EmergencyCallResponse)
 async def report_emergency(request: EmergencyCallRequest):
+    # Input validation
+    if not request.transcript or len(request.transcript.strip()) < 3:
+        raise HTTPException(status_code=422, detail="Transcript is too short or empty.")
     try:
         result = await supervisor.process_call(raw_transcript=request.transcript, caller_id=request.caller_id)
         eta = min((resource["eta_minutes"] for resource in result["assigned_resources"]), default=None)
@@ -237,7 +254,35 @@ async def get_active_incidents():
 
 @app.post("/api/v1/simulation/run")
 async def run_simulation(scenario: str = "normal", count: int = 5):
+    """Batch simulation runner. Scenarios: normal, flood, prank, fire, accident, medical"""
     scenarios = SimulationScenarios()
+    count = max(1, min(count, 20))  # clamp 1-20
+
+    BUILTIN_TRANSCRIPTS = {
+        "fire": [
+            "Bhai aag lag gayi sector 14 market mein, 3 log fas gaye hain ander!",
+            "Fire at Ambience Mall, heavy smoke on third floor, people trapped!",
+            "Cylinder blast hua hai DLF ke paas, ek aadmi jal gaya hai, jaldi aao!",
+        ],
+        "accident": [
+            "Mera accident ho gaya NH8 par, mujhe aur dost ko khoon aa raha hai!",
+            "Two trucks collided near Iffco Chowk, driver unconscious, help needed.",
+            "Teen gaadiya takra gayi Sector 29 chowk pe, 4 log ghaayal hain!",
+        ],
+        "medical": [
+            "Heart attack aa gaya hai meri maa ko, saans nahi le rahi, Sector 18.",
+            "Chest pain and breathlessness, patient unconscious, Nehru Place.",
+            "Meri biwi ko labor pain ho raha hai, raste mein hain, ambulance bhejo!",
+        ],
+    }
+
+    if scenario in BUILTIN_TRANSCRIPTS:
+        selected = BUILTIN_TRANSCRIPTS[scenario]
+        # Cycle through transcripts if count > available
+        incidents_to_run = [selected[i % len(selected)] for i in range(count)]
+        for transcript in incidents_to_run:
+            asyncio.create_task(process_simulated_incident(transcript))
+        return {"queued": count, "scenario": scenario}
 
     if scenario == "normal":
         incidents = scenarios.normal_load()[:count]
@@ -246,12 +291,15 @@ async def run_simulation(scenario: str = "normal", count: int = 5):
     elif scenario == "prank":
         incidents = scenarios.prank_storm()[:count]
     else:
-        raise HTTPException(status_code=400, detail="Invalid scenario")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid scenario '{scenario}'. Valid: normal, flood, prank, fire, accident, medical",
+        )
 
     for incident in incidents:
         asyncio.create_task(process_simulated_incident(incident["transcript"]))
 
-    return {"queued": len(incidents)}
+    return {"queued": len(incidents), "scenario": scenario}
 
 
 async def process_simulated_incident(transcript: str):
