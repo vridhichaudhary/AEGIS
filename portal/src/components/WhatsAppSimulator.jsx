@@ -29,7 +29,7 @@ const WhatsAppSimulator = () => {
     setSending(true);
     setSelectedTemplate(template.id);
 
-    const userMsg = { from: 'user', text: template.message.text?.body || 'Shared live location', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) };
+    const userMsg = { from: 'user', text: template.message.text?.body || 'Shared live location', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) };
     setMessages(prev => [...prev, userMsg]);
 
     try {
@@ -51,75 +51,73 @@ const WhatsAppSimulator = () => {
           const replyMsg = {
             from: 'aegis',
             text: data.whatsapp_reply || `Emergency received. AEGIS ID: ${data.incident_id?.slice(0, 8).toUpperCase()}. Resources dispatched.`,
-            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
           };
           setMessages(prev => [...prev, replyMsg]);
           setSending(false);
-        }, 1500);
+        }, 1200);
       } else {
         throw new Error('Webhook failed');
       }
     } catch (e) {
       setTimeout(() => {
-        setMessages(prev => [...prev, { from: 'aegis', text: 'Error connecting to AEGIS. Please try again.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }]);
+        setMessages(prev => [...prev, { from: 'aegis', text: 'Error connecting to AEGIS.', time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) }]);
         setSending(false);
       }, 1000);
     }
   };
 
   return (
-    <div className="glass rounded-xl overflow-hidden shadow-lg border border-green-500/30 flex flex-col mt-4">
-      <div className="bg-green-900/30 p-3 flex justify-between items-center border-b border-green-500/30">
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-          <h3 className="font-bold text-green-300 text-sm">WhatsApp Simulator</h3>
-          <span className="text-[10px] bg-green-900/50 text-green-400 px-2 py-0.5 rounded border border-green-600/40 font-bold uppercase">Demo Mode</span>
-        </div>
-        <div className="flex items-center gap-1.5">
-          <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-white font-black text-lg select-none">W</div>
-        </div>
+    <div className="card-flush flex flex-col bg-aegis-bg-surface overflow-hidden">
+      <div className="section-header flex justify-between items-center">
+        <span>WhatsApp Channel</span>
+        <span className="badge badge-whatsapp badge-xs">ACTIVE</span>
       </div>
 
-      {/* Chat thread */}
-      <div className="bg-[#0B141A] h-52 overflow-y-auto p-3 flex flex-col gap-2 custom-scrollbar">
+      <div className="bg-aegis-bg-base/50 h-48 overflow-y-auto p-3 flex flex-col gap-2 custom-scrollbar">
         {messages.length === 0 && (
-          <div className="flex-1 flex items-center justify-center text-gray-600 text-xs italic">Select a template below to send a mock emergency...</div>
+          <div className="flex-1 flex items-center justify-center text-aegis-text-muted text-[10px] uppercase tracking-widest opacity-50 italic text-center">
+            Awaiting WhatsApp transmissions...
+          </div>
         )}
         {messages.map((msg, i) => (
           <div key={i} className={`flex ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}>
-            <div className={`max-w-[80%] px-3 py-2 rounded-lg text-xs leading-relaxed shadow ${msg.from === 'user' ? 'bg-[#005C4B] text-white rounded-br-none' : 'bg-[#1F2C34] text-gray-200 rounded-bl-none'}`}>
-              {msg.from === 'aegis' && <div className="text-green-400 text-[10px] font-bold mb-1">AEGIS System</div>}
+            <div className={`max-w-[85%] px-2 py-1.5 rounded-lg text-[11px] leading-relaxed border ${
+              msg.from === 'user' 
+                ? 'bg-[#005C4B]/20 border-green-500/30 text-green-100 rounded-br-none' 
+                : 'bg-aegis-bg-elevated border-aegis-border text-aegis-text-secondary rounded-bl-none'
+            }`}>
+              {msg.from === 'aegis' && <div className="text-aegis-low text-[9px] font-bold mb-0.5 mono">AEGIS SYSTEM</div>}
               <p>{msg.text}</p>
-              <div className={`text-[10px] mt-1 ${msg.from === 'user' ? 'text-green-300/70 text-right' : 'text-gray-500'}`}>{msg.time}</div>
+              <div className={`text-[8px] mt-1 mono ${msg.from === 'user' ? 'text-green-500/70 text-right' : 'text-aegis-text-muted'}`}>{msg.time}</div>
             </div>
           </div>
         ))}
         {sending && (
           <div className="flex justify-start">
-            <div className="bg-[#1F2C34] px-3 py-2 rounded-lg rounded-bl-none">
+            <div className="bg-aegis-bg-elevated px-2 py-1.5 rounded border border-aegis-border rounded-bl-none">
               <div className="flex gap-1 items-center">
-                <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{animationDelay:'0ms'}}></div>
-                <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{animationDelay:'150ms'}}></div>
-                <div className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{animationDelay:'300ms'}}></div>
+                {[0, 150, 300].map(delay => (
+                  <div key={delay} className="w-1 h-1 bg-aegis-text-muted rounded-full animate-bounce" style={{animationDelay:`${delay}ms`}}></div>
+                ))}
               </div>
             </div>
           </div>
         )}
       </div>
 
-      {/* Templates */}
-      <div className="p-3 bg-black/40 flex flex-col gap-2">
-        <p className="text-[10px] text-gray-500 uppercase tracking-widest font-bold">Quick Templates</p>
-        <div className="flex flex-col gap-1.5">
+      <div className="p-3 bg-aegis-bg-elevated/30 border-t border-aegis-border flex flex-col gap-2">
+        <span className="text-[9px] font-bold text-aegis-text-muted uppercase tracking-widest">Mock Ingestion Templates</span>
+        <div className="grid grid-cols-1 gap-1.5">
           {TEMPLATES.map(t => (
             <button
               key={t.id}
               disabled={sending}
               onClick={() => sendMessage(t)}
-              className={`text-left text-xs px-3 py-2 rounded border transition-all ${selectedTemplate === t.id && sending ? 'border-green-500 bg-green-900/30 text-green-300' : 'border-gray-700 bg-gray-800/50 text-gray-300 hover:border-green-600 hover:bg-green-900/20'} disabled:opacity-50 disabled:cursor-not-allowed`}
+              className={`btn btn-xs btn-ghost text-left flex flex-col items-start py-1.5 h-auto ${selectedTemplate === t.id && sending ? 'border-aegis-low/50 bg-aegis-low/5' : ''}`}
             >
-              <span className="font-bold">{t.label}</span>
-              <p className="text-gray-500 text-[10px] mt-0.5 truncate">{t.message.text?.body}</p>
+              <span className="font-bold text-[10px]">{t.label}</span>
+              <p className="text-aegis-text-muted text-[9px] truncate w-full">{t.message.text?.body}</p>
             </button>
           ))}
         </div>

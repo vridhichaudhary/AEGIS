@@ -1,4 +1,5 @@
 import React from 'react';
+import { ShieldAlert, AlertTriangle, Radio } from 'lucide-react';
 
 const MCIPanel = ({ mciState }) => {
   if (!mciState || !mciState.active) return null;
@@ -6,41 +7,50 @@ const MCIPanel = ({ mciState }) => {
   const { zone, details } = mciState;
 
   return (
-    <div className="bg-red-950/40 rounded-xl overflow-hidden shadow-[0_0_20px_rgba(220,38,38,0.3)] border-2 border-red-500/50 flex flex-col mb-4 animate-pulse-slow">
-      <div className="bg-red-900/60 p-3 flex justify-between items-center border-b border-red-500/50">
+    <div className="card priority-border-p1 bg-aegis-critical/5 mb-4 animate-pulse-slow overflow-hidden">
+      <div className="bg-aegis-critical/10 p-3 flex justify-between items-center border-b border-aegis-critical/30">
         <div className="flex items-center gap-3">
-          <span className="text-2xl animate-bounce">🚨</span>
+          <ShieldAlert className="text-aegis-critical" size={24} />
           <div>
-            <h2 className="font-black text-red-200 tracking-widest uppercase text-lg leading-tight">MCI ACTIVE — {zone}</h2>
-            <p className="text-red-400 text-xs font-bold uppercase tracking-wider">NDMA Protocol Activated</p>
+            <h2 className="font-bold text-aegis-text-primary tracking-[0.15em] uppercase text-lg leading-tight">MCI ACTIVE — {zone}</h2>
+            <p className="text-aegis-critical text-[10px] font-bold uppercase tracking-[0.1em]">NDMA Protocol Level 4</p>
           </div>
         </div>
-        <div className="bg-red-950/80 px-3 py-1 rounded border border-red-500/50">
-          <span className="text-xs text-red-300 font-mono">T-MINUS</span>
-          <span className="text-lg font-bold text-red-400 ml-2 font-mono tracking-wider">
-             EST 45m
-          </span>
+        <div className="bg-aegis-bg-base px-3 py-1.5 rounded border border-aegis-critical/30 flex flex-col items-end">
+          <span className="text-[9px] text-aegis-text-muted mono font-bold">STABILIZATION ETA</span>
+          <span className="text-sm font-bold text-aegis-critical mono tracking-wider">45:00 MIN</span>
         </div>
       </div>
 
       {details && (
-        <div className="p-4 grid grid-cols-2 gap-4">
-          <div className="bg-black/50 p-3 rounded-lg border border-red-500/30">
-            <h4 className="text-red-400 text-[10px] font-bold uppercase tracking-widest mb-1 border-b border-red-500/20 pb-1">Mutual Aid Request</h4>
-            <p className="text-red-100 text-sm">{details.mutual_aid_request}</p>
+        <div className="p-4 grid grid-cols-2 gap-3">
+          <div className="p-2 rounded bg-aegis-bg-base border border-aegis-border">
+            <div className="flex items-center gap-1.5 mb-1.5 pb-1 border-b border-aegis-border">
+              <Radio size={10} className="text-aegis-high" />
+              <h4 className="text-aegis-high text-[9px] font-bold uppercase tracking-widest">Mutual Aid Request</h4>
+            </div>
+            <p className="text-aegis-text-primary text-[11px] leading-relaxed">{details.mutual_aid_request}</p>
           </div>
-          <div className="bg-black/50 p-3 rounded-lg border border-red-500/30">
-            <h4 className="text-red-400 text-[10px] font-bold uppercase tracking-widest mb-1 border-b border-red-500/20 pb-1">Hospital Alert</h4>
-            <p className="text-red-100 text-sm">{details.hospital_alert}</p>
+          
+          <div className="p-2 rounded bg-aegis-bg-base border border-aegis-border">
+            <div className="flex items-center gap-1.5 mb-1.5 pb-1 border-b border-aegis-border">
+              <AlertTriangle size={10} className="text-aegis-high" />
+              <h4 className="text-aegis-high text-[9px] font-bold uppercase tracking-widest">Hospital Alert</h4>
+            </div>
+            <p className="text-aegis-text-primary text-[11px] leading-relaxed">{details.hospital_alert}</p>
           </div>
-          <div className="bg-black/50 p-3 rounded-lg border border-red-500/30 col-span-2">
-            <h4 className="text-red-400 text-[10px] font-bold uppercase tracking-widest mb-1 border-b border-red-500/20 pb-1">Resource Gap Analysis</h4>
-            <p className="text-red-100 text-sm">{details.resource_gap_analysis}</p>
+
+          <div className="p-2 rounded bg-aegis-bg-base border border-aegis-border col-span-2">
+            <h4 className="text-aegis-text-muted text-[9px] font-bold uppercase tracking-widest mb-1.5 pb-1 border-b border-aegis-border">Resource Gap Analysis</h4>
+            <p className="text-aegis-text-primary text-[11px] leading-relaxed">{details.resource_gap_analysis}</p>
           </div>
-          <div className="bg-red-900/20 p-3 rounded-lg border border-red-500/30 col-span-2 relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-1 h-full bg-red-500"></div>
-            <h4 className="text-red-400 text-[10px] font-bold uppercase tracking-widest mb-1">Public Media Advisory</h4>
-            <p className="text-red-200 text-xs italic">"{details.media_advisory_draft}"</p>
+
+          <div className="p-2 rounded bg-aegis-critical/5 border border-aegis-critical/20 col-span-2">
+            <h4 className="text-aegis-critical text-[9px] font-bold uppercase tracking-widest mb-1 flex items-center gap-1.5">
+              <span className="status-dot status-dot-offline"></span>
+              Public Advisory Draft
+            </h4>
+            <p className="text-aegis-text-secondary text-[11px] italic leading-relaxed">"{details.media_advisory_draft}"</p>
           </div>
         </div>
       )}

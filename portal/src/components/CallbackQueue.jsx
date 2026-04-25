@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { ChevronDown, ChevronUp, PhoneForwarded } from 'lucide-react';
 
 const CallbackQueue = ({ callbacks = [], onSimulateResponse }) => {
   const [isOpen, setIsOpen] = useState(true);
@@ -8,10 +9,7 @@ const CallbackQueue = ({ callbacks = [], onSimulateResponse }) => {
     const interval = setInterval(() => {
       const newTimers = {};
       callbacks.forEach((cb) => {
-        const start = new Date(cb.created_at).getTime();
-        const now = new Date().getTime();
-        const diff = Math.floor((now - start) / 1000);
-        
+        const diff = Math.floor((new Date().getTime() - new Date(cb.created_at).getTime()) / 1000);
         const m = Math.floor(diff / 60);
         const s = diff % 60;
         newTimers[cb.incident_id] = `${m}:${s.toString().padStart(2, '0')}`;
@@ -24,52 +22,50 @@ const CallbackQueue = ({ callbacks = [], onSimulateResponse }) => {
   if (callbacks.length === 0) return null;
 
   return (
-    <div className="glass rounded-xl overflow-hidden shadow-lg border border-yellow-500/30 flex flex-col mt-4">
+    <div className="card-flush flex flex-col bg-aegis-bg-surface overflow-hidden">
       <div 
-        className="bg-yellow-500/20 p-3 flex justify-between items-center border-b border-yellow-500/30 cursor-pointer"
+        className="section-header flex justify-between items-center cursor-pointer hover:bg-aegis-bg-hover transition-colors"
         onClick={() => setIsOpen(!isOpen)}
       >
         <div className="flex items-center gap-2">
-          <div className="w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></div>
-          <h3 className="font-bold text-yellow-400">Pending Callbacks ({callbacks.length})</h3>
+          <PhoneForwarded size={14} className="text-aegis-high" />
+          <span>Pending Callbacks ({callbacks.length})</span>
         </div>
-        <button className="text-yellow-400 hover:text-yellow-300">
-          {isOpen ? '▼' : '▲'}
-        </button>
+        {isOpen ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
       </div>
 
       {isOpen && (
-        <div className="p-3 space-y-3 max-h-80 overflow-y-auto custom-scrollbar bg-black/40">
+        <div className="p-3 space-y-3 max-h-80 overflow-y-auto custom-scrollbar bg-aegis-bg-base/30">
           {callbacks.map((cb) => (
-            <div key={cb.incident_id} className="bg-gray-800/80 rounded-lg p-3 border border-yellow-500/20 relative overflow-hidden group">
+            <div key={cb.incident_id} className="bg-aegis-bg-surface rounded p-3 border border-aegis-high/20 relative group hover:border-aegis-high/40 transition-colors">
               <div className="flex justify-between items-start mb-2">
-                <div className="font-mono text-sm font-bold text-white tracking-widest">
+                <span className="mono text-[11px] font-bold text-aegis-text-primary tracking-widest">
                   {cb.caller_id && cb.caller_id !== 'Unknown' ? 
                     cb.caller_id.replace(/(\+\d{2})-(\d{4})-(\d{2})(\d{4})/, "$1-XXXX-XX$4") : 
                     '+91-XXXX-XX1234'
                   }
-                </div>
-                <div className="text-xs font-mono text-yellow-400 bg-yellow-500/10 px-2 py-0.5 rounded border border-yellow-500/30">
+                </span>
+                <span className="badge badge-warning badge-xs mono">
                   {timers[cb.incident_id] || '0:00'}
-                </div>
+                </span>
               </div>
               
-              <div className="text-xs text-gray-400 mb-2">
-                Missing: <span className="text-red-400 font-semibold">{cb.missing_fields?.join(', ') || 'Information'}</span>
+              <div className="text-[10px] text-aegis-text-muted mb-2 uppercase tracking-widest">
+                Missing: <span className="text-aegis-critical font-bold">{cb.missing_fields?.join(', ') || 'Information'}</span>
               </div>
               
-              <div className="bg-blue-900/30 border border-blue-500/30 rounded p-2 mb-3">
-                <div className="text-[10px] text-blue-400 uppercase tracking-wider mb-1 font-bold">Suggested Script</div>
-                <div className="text-sm text-blue-100 italic">
-                  "{cb.suggested_question || 'Could you provide more details about your location?'}"
+              <div className="bg-aegis-info/5 border border-aegis-info/20 rounded p-2 mb-3">
+                <div className="text-[9px] text-aegis-info uppercase tracking-widest mb-1 font-bold">Heuristic Prompt</div>
+                <div className="text-[11px] text-aegis-text-secondary italic leading-relaxed">
+                  "{cb.suggested_question || 'Awaiting dynamic script...'}"
                 </div>
               </div>
 
               <button
                 onClick={() => onSimulateResponse(cb.incident_id)}
-                className="w-full bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400 border border-yellow-500/50 py-1.5 rounded text-xs font-bold transition-colors"
+                className="btn btn-xs btn-warning w-full"
               >
-                Simulate Callback Response
+                SIMULATE OPERATOR RESPONSE
               </button>
             </div>
           ))}

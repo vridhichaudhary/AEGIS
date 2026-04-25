@@ -4,39 +4,37 @@ import { ShieldAlert, Crosshair, MapPin, Zap } from 'lucide-react';
 const ThreatIntelligencePanel = ({ data }) => {
   if (!data) return null;
 
-  const getThreatColor = (level) => {
+  const getThreatBadge = (level) => {
     switch(level) {
-      case 'CRITICAL': return 'bg-red-500 text-red-500 border-red-500/50 shadow-[0_0_15px_rgba(239,68,68,0.2)]';
-      case 'HIGH': return 'bg-orange-500 text-orange-500 border-orange-500/50 shadow-[0_0_15px_rgba(249,115,22,0.2)]';
-      case 'MEDIUM': return 'bg-yellow-500 text-yellow-500 border-yellow-500/50 shadow-[0_0_15px_rgba(234,179,8,0.2)]';
-      case 'LOW': default: return 'bg-green-500 text-green-500 border-green-500/50 shadow-[0_0_15px_rgba(34,197,94,0.2)]';
+      case 'CRITICAL': return 'badge-critical';
+      case 'HIGH': return 'badge-warning';
+      case 'MEDIUM': return 'badge-info';
+      default: return 'badge-success';
     }
   };
 
-  const threatColor = getThreatColor(data.threat_level);
-
   return (
-    <div className={`glass-card rounded-xl p-5 border flex flex-col mb-4 bg-[#0A1118]/80 ${threatColor.split(' ')[2]} ${threatColor.split(' ')[3]}`}>
-      <div className="flex justify-between items-center mb-4 border-b border-gray-700/50 pb-3">
-        <h2 className="text-sm font-bold flex items-center gap-2 uppercase tracking-widest text-gray-200">
-          <ShieldAlert size={16} className={`${threatColor.split(' ')[1]} animate-pulse`} />
-          Threat Intelligence <span className="text-[10px] text-gray-500 lowercase">(30m forecast)</span>
-        </h2>
-        <span className={`text-[10px] font-bold px-2 py-1 rounded border uppercase tracking-widest ${threatColor.split(' ')[0]}/10 ${threatColor.split(' ')[1]} ${threatColor.split(' ')[2]}`}>
+    <div className={`card-flush flex flex-col bg-aegis-bg-surface overflow-hidden ${data.threat_level === 'CRITICAL' ? 'border-aegis-critical/30 shadow-[0_0_15px_rgba(239,68,68,0.1)]' : ''}`}>
+      <div className="section-header flex justify-between items-center">
+        <div className="flex items-center gap-2">
+          <ShieldAlert size={14} className={data.threat_level === 'CRITICAL' ? 'text-aegis-critical animate-pulse' : 'text-aegis-info'} />
+          <span>Threat Intelligence</span>
+        </div>
+        <span className={`badge ${getThreatBadge(data.threat_level)} badge-xs`}>
           {data.threat_level}
         </span>
       </div>
 
-      <div className="flex flex-col gap-4 overflow-y-auto custom-scrollbar max-h-48 pr-2">
+      <div className="p-3 flex flex-col gap-4 overflow-y-auto custom-scrollbar max-h-64">
         {/* Risk Zones */}
         {data.risk_zones?.length > 0 && (
           <div>
-            <h3 className="text-[10px] text-gray-400 font-bold uppercase tracking-wider flex items-center gap-1.5 mb-2">
-              <MapPin size={10} /> High Risk Zones
+            <h3 className="text-[9px] text-aegis-text-muted font-bold uppercase tracking-widest flex items-center gap-1.5 mb-2">
+              <MapPin size={10} /> Active Risk Zones
             </h3>
             <div className="flex flex-wrap gap-1.5">
               {data.risk_zones.map((zone, i) => (
-                <span key={i} className="text-[11px] bg-red-500/10 text-red-300 border border-red-500/20 px-2 py-0.5 rounded">
+                <span key={i} className="badge badge-outline text-[10px] mono">
                   {zone}
                 </span>
               ))}
@@ -47,14 +45,14 @@ const ThreatIntelligencePanel = ({ data }) => {
         {/* Cascade Predictions */}
         {data.cascade_predictions?.length > 0 && (
           <div>
-            <h3 className="text-[10px] text-gray-400 font-bold uppercase tracking-wider flex items-center gap-1.5 mb-2">
-              <Zap size={10} /> Projected Cascades
+            <h3 className="text-[9px] text-aegis-text-muted font-bold uppercase tracking-widest flex items-center gap-1.5 mb-2">
+              <Zap size={10} /> Predicted Cascades
             </h3>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               {data.cascade_predictions.map((pred, i) => (
-                <div key={i} className="bg-gray-800/50 border border-gray-700 p-2 rounded flex justify-between items-center">
-                  <span className="text-xs text-gray-300">{pred.description}</span>
-                  <span className="text-[10px] font-mono text-orange-400 bg-orange-400/10 px-1.5 py-0.5 rounded ml-2 flex-shrink-0">
+                <div key={i} className="bg-aegis-bg-base/50 border border-aegis-border p-2 rounded flex justify-between items-center group hover:border-aegis-high/30 transition-colors">
+                  <span className="text-[11px] text-aegis-text-secondary">{pred.description}</span>
+                  <span className="mono text-[10px] font-bold text-aegis-high bg-aegis-high/10 px-1.5 py-0.5 rounded ml-2">
                     {pred.confidence_percentage}%
                   </span>
                 </div>
@@ -66,17 +64,17 @@ const ThreatIntelligencePanel = ({ data }) => {
         {/* Pre-positioning */}
         {data.preposition_orders?.length > 0 && (
           <div>
-            <h3 className="text-[10px] text-gray-400 font-bold uppercase tracking-wider flex items-center gap-1.5 mb-2">
-              <Crosshair size={10} /> Pre-positioning Directives
+            <h3 className="text-[9px] text-aegis-text-muted font-bold uppercase tracking-widest flex items-center gap-1.5 mb-2">
+              <Crosshair size={10} /> Deploy Directives
             </h3>
             <div className="space-y-2">
               {data.preposition_orders.map((order, i) => (
-                <div key={i} className="bg-blue-500/5 border border-blue-500/20 p-2 rounded">
+                <div key={i} className="bg-aegis-info/5 border border-aegis-info/20 p-2 rounded">
                   <div className="flex justify-between items-center mb-1">
-                    <span className="text-[11px] font-bold text-blue-400 uppercase">{order.resource_type}</span>
-                    <span className="text-[10px] text-gray-400 font-mono">to {order.destination}</span>
+                    <span className="text-[10px] font-bold text-aegis-info uppercase mono">{order.resource_type}</span>
+                    <span className="text-[9px] text-aegis-text-muted mono">→ {order.destination}</span>
                   </div>
-                  <p className="text-[10px] text-gray-500 leading-snug">{order.reason}</p>
+                  <p className="text-[10px] text-aegis-text-secondary leading-snug italic">"{order.reason}"</p>
                 </div>
               ))}
             </div>

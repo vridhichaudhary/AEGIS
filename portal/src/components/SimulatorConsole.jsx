@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Phone, PhoneCall, Radio, Activity, Mic, UploadCloud, Loader } from 'lucide-react';
+import { Phone, PhoneCall, Radio, Activity, Mic, UploadCloud, Loader, RefreshCw } from 'lucide-react';
 
 const transcripts = [
   "Help, aag lag gayi hai Sector 14 market mein, 3 log fas gaye hain ander!",
@@ -33,12 +33,6 @@ const SimulatorConsole = () => {
 
   const processAudioFile = async (file) => {
     if (!file) return;
-
-    if (file.size > 5 * 1024 * 1024) {
-      alert("File is too large. Max size is 5MB.");
-      return;
-    }
-
     setIsAudioMode(true);
     const newCallerId = `+91-112-${Math.floor(10000000 + Math.random() * 90000000)}`;
     setCallerId(newCallerId);
@@ -54,247 +48,142 @@ const SimulatorConsole = () => {
         method: 'POST',
         body: formData,
       });
-      
-      if (!response.ok) {
-        throw new Error("Failed to process audio.");
-      }
-
+      if (!response.ok) throw new Error("Failed to process audio.");
       const data = await response.json();
-      
-      // The transcript is in the first agent's trail or reasoning
       const transcript = data.agent_trail[0]?.reasoning || "Audio processed successfully.";
-      
       setDisplayedText(transcript);
       setStatus('processing');
-      
       setTimeout(() => {
         setStatus('completed');
-        setTimeout(() => {
-          setStatus('idle');
-          setIsAudioMode(false);
-          if (fileInputRef.current) fileInputRef.current.value = "";
-        }, 3000);
+        setTimeout(() => { setStatus('idle'); setIsAudioMode(false); if (fileInputRef.current) fileInputRef.current.value = ""; }, 3000);
       }, 1000);
-
     } catch (error) {
-      console.error(error);
-      setDisplayedText("Error transcribing audio. Check backend logs or try again.");
+      setDisplayedText("Error transcribing audio.");
       setStatus('completed');
       setTimeout(() => { setStatus('idle'); setIsAudioMode(false); }, 3000);
     }
   };
 
-  const handleFileUpload = (e) => {
-    processAudioFile(e.target.files[0]);
-  };
+  useEffect(() => {
+    if (isAudioMode) return;
+    let timeout;
+    if (status === 'idle') {
+      timeout = setTimeout(() => {
+        setCurrentIndex((prev) => (prev + 1) % transcripts.length);
+        setCallerId(`+91-112-${Math.floor(10000000 + Math.random() * 90000000)}`);
+        setDisplayedText('');
+        setStatus('incoming');
+      }, 30000);
+    } else if (status === 'incoming') {
+      timeout = setTimeout(() => setStatus('transcribing'), 1500);
+    } else if (status === 'transcribing') {
+      const fullText = transcripts[currentIndex];
+      if (displayedText.length < fullText.length) {
+        timeout = setTimeout(() => setDisplayedText(fullText.slice(0, displayedText.length + 1)), 40);
+      } else {
+        timeout = setTimeout(() => setStatus('processing'), 500);
+      }
+    } else if (status === 'processing') {
+      handleReport(transcripts[currentIndex], callerId).finally(() => setStatus('completed'));
+    } else if (status === 'completed') {
+      timeout = setTimeout(() => setStatus('idle'), 2000);
+    }
+    return () => clearTimeout(timeout);
+  }, [status, displayedText, currentIndex, callerId, isAudioMode]);
 
-  const handleSampleUpload = async (filename, label) => {
+  const handleSampleUpload = async (filename) => {
     try {
       setStatus('transcribing');
       setIsAudioMode(true);
-      
       const response = await fetch(`${apiBase}/demo_assets/${filename}`);
       if (!response.ok) throw new Error("Sample not found");
-      
       const blob = await response.blob();
-      const file = new File([blob], filename, { type: 'audio/wav' });
-      
-      await processAudioFile(file);
+      await processAudioFile(new File([blob], filename, { type: 'audio/wav' }));
     } catch (error) {
-      console.error("Sample fetch failed:", error);
       setDisplayedText("Sample audio file not found.");
       setStatus('completed');
       setTimeout(() => { setStatus('idle'); setIsAudioMode(false); }, 2000);
     }
   };
 
-  // Auto Simulator Logic
-  useEffect(() => {
-    if (isAudioMode) return; // Disable auto-play when uploading audio
-    
-    let timeout;
-    
-    if (status === 'idle') {
-      // Increase idle time to 30s to allow manual testing
-      timeout = setTimeout(() => {
-        const nextIdx = (currentIndex + 1) % transcripts.length;
-        setCurrentIndex(nextIdx);
-        setCallerId(`+91-112-${Math.floor(10000000 + Math.random() * 90000000)}`);
-        setDisplayedText('');
-        setStatus('incoming');
-      }, 30000);
-    } else if (status === 'incoming') {
-      timeout = setTimeout(() => {
-        setStatus('transcribing');
-      }, 1500);
-    } else if (status === 'transcribing') {
-      const fullText = transcripts[currentIndex];
-      if (displayedText.length < fullText.length) {
-        timeout = setTimeout(() => {
-          setDisplayedText(fullText.slice(0, displayedText.length + 1));
-        }, 40); // 40ms per char
-      } else {
-        timeout = setTimeout(() => {
-          setStatus('processing');
-        }, 500);
-      }
-    } else if (status === 'processing') {
-      handleReport(transcripts[currentIndex], callerId).finally(() => {
-        setStatus('completed');
-      });
-    } else if (status === 'completed') {
-      timeout = setTimeout(() => {
-        setStatus('idle');
-      }, 2000);
-    }
-
-    return () => clearTimeout(timeout);
-  }, [status, displayedText, currentIndex, callerId, apiBase, isAudioMode]);
-
   return (
-    <div className="glass-card rounded-xl flex flex-col overflow-hidden relative border border-gray-700/50 h-full">
-      {/* Header */}
-      <div className="bg-gray-900/80 border-b border-gray-700/50 p-3 flex items-center justify-between">
-        <h2 className="text-sm font-bold flex items-center gap-2 text-gray-200 uppercase tracking-wider">
-          <Radio size={16} className="text-blue-400" /> Live Call Feed
-        </h2>
-        
-        {/* Status Badges */}
-        {status === 'incoming' && (
-          <div className="flex items-center gap-2 bg-red-500/20 text-red-400 px-3 py-1 rounded-full text-xs font-bold border border-red-500/30 animate-pulse">
-            <PhoneCall size={14} className="animate-bounce" />
-            INCOMING CALL
-          </div>
-        )}
-        {status === 'transcribing' && !isAudioMode && (
-          <div className="flex items-center gap-2 bg-green-500/20 text-green-400 px-3 py-1 rounded-full text-xs font-bold border border-green-500/30">
-            <Activity size={14} className="animate-pulse" />
-            ACTIVE CALL
-          </div>
-        )}
-        {status === 'transcribing' && isAudioMode && (
-          <div className="flex items-center gap-2 bg-purple-500/20 text-purple-400 px-3 py-1 rounded-full text-xs font-bold border border-purple-500/30 animate-pulse">
-            <Loader size={14} className="animate-spin" />
-            TRANSCRIBING WHISPER...
-          </div>
-        )}
-        {(status === 'processing' || status === 'completed') && (
-          <div className="flex items-center gap-2 bg-blue-500/20 text-blue-400 px-3 py-1 rounded-full text-xs font-bold border border-blue-500/30">
-            DISPATCHING...
-          </div>
+    <div className="card-flush flex flex-col bg-aegis-bg-surface overflow-hidden">
+      <div className="section-header flex justify-between items-center">
+        <div className="flex items-center gap-2">
+          <Radio size={14} className="text-aegis-info" />
+          <span>Live Call Simulator</span>
+        </div>
+        {status !== 'idle' && (
+          <button onClick={() => { setStatus('idle'); setIsAudioMode(false); }} className="text-aegis-info hover:text-white transition-colors">
+            <RefreshCw size={12} />
+          </button>
         )}
       </div>
       
-      {/* Content Body */}
-      <div className="p-4 flex-1 flex flex-col justify-center min-h-[150px]">
+      <div className="p-3 flex-1 flex flex-col min-h-[140px]">
         {status !== 'idle' ? (
-          <div className="animate-fade-in flex flex-col items-center justify-center h-full">
-             <div className="flex items-center justify-between w-full max-w-sm mb-4">
-               <div className="text-gray-400 text-sm font-mono flex items-center gap-2 bg-gray-800/50 px-3 py-1 rounded-md border border-gray-700">
-                 <Phone size={14} /> Caller ID: {callerId}
-               </div>
-               {isAudioMode && (status === 'processing' || status === 'completed') && (
-                 <div className="text-[9px] font-bold text-purple-400 bg-purple-500/10 border border-purple-500/30 px-2 py-1 rounded uppercase tracking-widest flex items-center gap-1">
-                   <Mic size={10} /> Transcribed from Audio
-                 </div>
-               )}
-             </div>
-             
-             {status === 'transcribing' && (
-                <div className="flex items-end gap-1 mb-6 h-8">
-                  {[...Array(15)].map((_, i) => (
-                    <div 
-                      key={i} 
-                      className={`w-1.5 rounded-t waveform-bar ${isAudioMode ? 'bg-purple-400' : 'bg-green-400'}`}
-                      style={{ 
-                        animationDelay: `${Math.random() * 0.5}s`,
-                        height: `${Math.random() * 60 + 40}%`
-                      }}
-                    />
+          <div className="flex flex-col h-full">
+            <div className="flex justify-between items-start mb-2">
+              <div className="flex flex-col gap-1">
+                <span className="mono text-[10px] text-aegis-text-muted flex items-center gap-1">
+                  <Phone size={10} /> {callerId}
+                </span>
+                {isAudioMode && (status === 'processing' || status === 'completed') && (
+                  <span className="badge badge-purple badge-xs">AUDIO UPLOAD</span>
+                )}
+              </div>
+              <span className={`badge badge-xs animate-pulse ${
+                status === 'incoming' ? 'badge-critical' : 
+                status === 'transcribing' ? 'badge-success' : 
+                'badge-info'
+              }`}>
+                {status.toUpperCase()}
+              </span>
+            </div>
+
+            <div className="flex-1 bg-aegis-bg-base/50 rounded border border-aegis-border p-3 flex flex-col items-center justify-center relative overflow-hidden">
+              {status === 'transcribing' && (
+                <div className="flex items-end gap-0.5 mb-2 h-4 absolute top-2 right-2 opacity-50">
+                  {[...Array(8)].map((_, i) => (
+                    <div key={i} className={`w-1 rounded-t bg-aegis-low animate-pulse`} style={{ height: `${Math.random() * 100}%`, animationDelay: `${i * 0.1}s` }} />
                   ))}
                 </div>
-             )}
-
-             <div className="relative w-full max-w-sm mx-auto">
-               <div className="bg-gray-900/80 rounded-lg p-4 text-center border border-gray-700 min-h-[100px] flex flex-col items-center justify-center">
-                 {isAudioMode && status === 'transcribing' ? (
-                    <p className="text-gray-400 text-sm italic animate-pulse">Running Whisper offline transcription model...</p>
-                 ) : (
-                    <p className="text-gray-100 font-medium text-lg leading-relaxed italic">
-                      "{displayedText}
-                      {status === 'transcribing' && !isAudioMode && <span className="animate-pulse bg-gray-300 w-2 h-5 inline-block align-middle ml-1"></span>}"
-                    </p>
-                 )}
-               </div>
-             </div>
+              )}
+              
+              <p className="text-[12px] text-aegis-text-primary italic leading-relaxed text-center font-medium">
+                {isAudioMode && status === 'transcribing' ? 'Running Whisper transcription...' : `"${displayedText || '...'}"`}
+              </p>
+            </div>
           </div>
         ) : (
-          <div className="flex flex-col items-center justify-center h-full text-gray-500">
-             <div className="text-xs font-medium animate-pulse mb-4 text-center">
-               SYSTEM STANDBY<br/>
-               <span className="opacity-50 text-[10px]">Waiting for next emergency call...</span>
-             </div>
-             
-             <div className="w-full max-w-[200px] p-3 border border-dashed border-gray-600 rounded-lg bg-gray-800/30 hover:bg-gray-800/50 transition-colors flex flex-col items-center justify-center cursor-pointer relative group" onClick={() => fileInputRef.current?.click()}>
-               <UploadCloud size={18} className="text-purple-400 mb-1 group-hover:scale-110 transition-transform" />
-               <span className="text-[9px] font-bold text-gray-300 uppercase tracking-widest">Upload Recording</span>
-               <input 
-                 type="file" 
-                 accept="audio/wav,audio/mp3,audio/mpeg,audio/ogg" 
-                 className="hidden" 
-                 ref={fileInputRef}
-                 onChange={handleFileUpload}
-               />
-             </div>
+          <div className="flex flex-col items-center justify-center h-full gap-3 py-4">
+             <div className="text-[10px] font-bold text-aegis-text-muted uppercase tracking-[0.2em] animate-pulse">System Standby</div>
+             <button 
+               onClick={() => fileInputRef.current?.click()}
+               className="btn btn-ghost w-full flex flex-col py-3 border-dashed"
+             >
+               <UploadCloud size={16} className="text-aegis-purple mb-1" />
+               <span className="text-[9px] uppercase tracking-widest">Upload Audio Recording</span>
+               <input type="file" className="hidden" ref={fileInputRef} onChange={(e) => processAudioFile(e.target.files[0])} />
+             </button>
           </div>
         )}
       </div>
 
-      {/* Persistent Quick Test Samples */}
-      <div className="bg-gray-900/50 border-t border-gray-700/50 p-3">
-        <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[9px] font-bold text-gray-500 uppercase tracking-widest">Quick Test Samples (Hindi)</span>
-            {status !== 'idle' && (
-              <button 
-                onClick={() => { setStatus('idle'); setIsAudioMode(false); }}
-                className="text-[8px] font-bold text-blue-400 hover:text-blue-300 uppercase tracking-tighter"
-              >
-                Reset Feed
-              </button>
-            )}
-          </div>
-          <div className="grid grid-cols-3 gap-2">
+      <div className="p-3 border-t border-aegis-border bg-aegis-bg-elevated/30">
+        <span className="text-[9px] font-bold text-aegis-text-muted uppercase tracking-widest mb-2 block">Quick Test Samples</span>
+        <div className="grid grid-cols-3 gap-2">
+          {['Fire', 'Accident', 'Medical'].map(type => (
             <button 
-              onClick={() => handleSampleUpload('fire_emergency.wav', 'Fire')}
-              disabled={status === 'transcribing' || status === 'processing'}
-              className="bg-red-500/10 hover:bg-red-500/20 disabled:opacity-30 border border-red-500/30 rounded py-1.5 px-1 text-[9px] font-bold text-red-400 uppercase transition-colors flex items-center justify-center gap-1"
+              key={type}
+              onClick={() => handleSampleUpload(`${type.toLowerCase()}_emergency.wav`)}
+              disabled={status !== 'idle'}
+              className="btn btn-xs btn-ghost text-[9px]"
             >
-              <Activity size={10} /> Fire
+              {type}
             </button>
-            <button 
-              onClick={() => handleSampleUpload('accident_emergency.wav', 'Accident')}
-              disabled={status === 'transcribing' || status === 'processing'}
-              className="bg-orange-500/10 hover:bg-orange-500/20 disabled:opacity-30 border border-orange-500/30 rounded py-1.5 px-1 text-[9px] font-bold text-orange-400 uppercase transition-colors flex items-center justify-center gap-1"
-            >
-              <Activity size={10} /> Accident
-            </button>
-            <button 
-              onClick={() => handleSampleUpload('medical_emergency.wav', 'Medical')}
-              disabled={status === 'transcribing' || status === 'processing'}
-              className="bg-green-500/10 hover:bg-green-500/20 disabled:opacity-30 border border-green-500/30 rounded py-1.5 px-1 text-[9px] font-bold text-green-400 uppercase transition-colors flex items-center justify-center gap-1"
-            >
-              <Activity size={10} /> Medical
-            </button>
-          </div>
+          ))}
         </div>
-      </div>
-      
-      {/* Progress Footer */}
-      <div className="h-1 w-full bg-gray-800">
-         <div 
-           className={`h-full transition-all duration-300 ${status === 'completed' ? 'bg-green-500 w-full' : status === 'processing' ? 'bg-blue-500 w-3/4' : status === 'transcribing' ? (isAudioMode ? 'bg-purple-500 w-1/2' : 'bg-emerald-400 w-1/2') : status === 'incoming' ? 'bg-red-500 w-1/4' : 'bg-transparent w-0'}`}
-         />
       </div>
     </div>
   );

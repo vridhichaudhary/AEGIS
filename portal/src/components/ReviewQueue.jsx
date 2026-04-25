@@ -1,5 +1,5 @@
 import React from 'react';
-import { ShieldAlert, UserCheck, Search } from 'lucide-react';
+import { ShieldAlert, UserCheck, Search, Trash2 } from 'lucide-react';
 
 const ReviewQueue = ({ incidents = [] }) => {
   const heldIncidents = incidents.filter(i => 
@@ -7,47 +7,46 @@ const ReviewQueue = ({ incidents = [] }) => {
   );
 
   return (
-    <div className="glass-card rounded-xl p-5 h-72 flex flex-col border border-amber-500/30 bg-[#0D151C]">
-      <div className="flex justify-between items-center mb-4">
-        <h2 className="text-sm font-bold flex items-center gap-2 text-amber-400 uppercase tracking-widest">
-          <ShieldAlert size={18} /> Review Queue
-        </h2>
-        <span className="text-[10px] bg-amber-500/20 text-amber-400 px-2 py-1 rounded border border-amber-500/30 font-bold">
+    <div className="card-flush flex flex-col bg-aegis-bg-surface overflow-hidden" style={{ height: '280px' }}>
+      <div className="section-header flex justify-between items-center">
+        <div className="flex items-center gap-2">
+          <ShieldAlert size={14} className="text-aegis-high" />
+          <span>Review Queue</span>
+        </div>
+        <span className="badge badge-warning badge-xs">
           {heldIncidents.length} HELD
         </span>
       </div>
 
-      <div className="flex-1 overflow-y-auto pr-2 custom-scrollbar space-y-3">
+      <div className="flex-1 overflow-y-auto p-3 custom-scrollbar space-y-3 bg-aegis-bg-base/30">
         {heldIncidents.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-gray-600 text-xs italic">
-            <UserCheck size={24} className="mb-2 opacity-20" />
-            <p>No calls pending review</p>
+          <div className="h-full flex flex-col items-center justify-center text-aegis-text-muted text-[10px] uppercase tracking-widest opacity-40 italic">
+            <UserCheck size={20} className="mb-2 opacity-20" />
+            <p>Verification complete</p>
           </div>
         ) : (
           heldIncidents.map((incident) => {
-            // Try to extract validation details from the reasoning in agent_trail if available
-            // In a real app, this would be part of the incident object
             return (
-              <div key={incident.incident_id} className="p-3 rounded-lg bg-amber-900/10 border border-amber-500/20 relative group">
+              <div key={incident.incident_id} className="bg-aegis-bg-surface rounded p-2.5 border border-aegis-high/20 group hover:border-aegis-high/40 transition-colors">
                 <div className="flex justify-between items-start mb-2">
-                  <span className="text-[10px] font-mono font-bold text-amber-300">#{incident.incident_id.slice(0, 8)}</span>
-                  <div className="flex items-center gap-2">
-                    <span className="text-[10px] font-bold text-red-400 bg-red-900/30 px-1.5 rounded border border-red-500/20">
-                      SCORE: {incident.authenticity_score}%
-                    </span>
-                  </div>
+                  <span className="mono text-[10px] font-bold text-aegis-high uppercase tracking-widest">
+                    #{incident.incident_id.slice(0, 8).toUpperCase()}
+                  </span>
+                  <span className="mono text-[10px] font-bold text-aegis-critical bg-aegis-critical/10 px-1.5 rounded border border-aegis-critical/20">
+                    S:{incident.authenticity_score}%
+                  </span>
                 </div>
                 
-                <p className="text-[11px] text-gray-300 line-clamp-2 mb-2 italic">
-                  "{incident.location?.raw_text || 'Unknown Location'}: {incident.incident_type?.category || 'Emergency'}"
+                <p className="text-[11px] text-aegis-text-secondary leading-relaxed mb-3 italic">
+                  "{incident.location?.raw_text || 'UNK'}: {incident.incident_type?.category || 'EVENT'}"
                 </p>
 
                 <div className="flex gap-2">
-                  <button className="flex-1 py-1 bg-amber-600 hover:bg-amber-500 text-white text-[9px] font-bold uppercase tracking-wider rounded transition-colors flex items-center justify-center gap-1">
-                    <Search size={10} /> Investigate
+                  <button className="btn btn-xs btn-primary flex-1">
+                    <Search size={10} className="mr-1" /> VERIFY
                   </button>
-                  <button className="flex-1 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-[9px] font-bold uppercase tracking-wider rounded border border-gray-700 transition-colors">
-                    Dismiss
+                  <button className="btn btn-xs btn-ghost flex-1">
+                    <Trash2 size={10} className="mr-1" /> DISCARD
                   </button>
                 </div>
               </div>

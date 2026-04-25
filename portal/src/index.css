@@ -1,60 +1,31 @@
+/* Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Pulse animation for P1 markers */
+/* AEGIS Design System */
+@import './styles/design-system.css';
+
+/* ─── Map animations (keep from original) ─── */
 @keyframes pulse-ring {
-  0% {
-    transform: scale(0.8);
-    opacity: 1;
-  }
-  50% {
-    transform: scale(1.2);
-    opacity: 0.5;
-  }
-  100% {
-    transform: scale(0.8);
-    opacity: 1;
-  }
+  0%   { transform: scale(0.8); opacity: 1; }
+  50%  { transform: scale(1.2); opacity: 0.5; }
+  100% { transform: scale(0.8); opacity: 1; }
 }
+.pulse-marker { animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
 
-.pulse-marker {
-  animation: pulse-ring 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-}
-
-/* Custom popup styling */
-.custom-popup .leaflet-popup-content-wrapper {
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-}
-
-.custom-popup .leaflet-popup-tip {
-  background: white;
-}
-
-/* Resource icon animation */
 @keyframes float {
-  0%, 100% {
-    transform: translateY(0);
-  }
-  50% {
-    transform: translateY(-5px);
-  }
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-5px); }
 }
+.custom-resource-icon { animation: float 3s ease-in-out infinite; }
 
-.custom-resource-icon {
-  animation: float 3s ease-in-out infinite;
-}
-
-/* Audio Waveform Animation */
+/* ─── Audio Waveform Animation ─── */
 @keyframes waveform {
-  0% { transform: scaleY(0.2); }
-  50% { transform: scaleY(1); }
+  0%   { transform: scaleY(0.2); }
+  50%  { transform: scaleY(1); }
   100% { transform: scaleY(0.2); }
 }
-
-.waveform-bar {
-  animation: waveform 1s ease-in-out infinite;
-  transform-origin: bottom;
-}
+.waveform-bar { animation: waveform 1s ease-in-out infinite; transform-origin: bottom; }

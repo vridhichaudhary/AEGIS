@@ -267,6 +267,9 @@ function App() {
       }
       else if (data.type === 'mci_resolved') {
         setMciState({ active: false, zone: null, details: null });
+        if (data.payload.aar_report) {
+          setReportData(data.payload.aar_report);
+        }
         setAgentEvents(prev => [{
           agent: 'MCI PROTOCOL',
           decision: `✅ MCI RESOLVED — ${data.payload.zone}`,
@@ -325,142 +328,119 @@ function App() {
     : 100;
 
   return (
-    <div className={`h-screen flex flex-col text-white overflow-hidden transition-all duration-700 ${mciState.active ? 'bg-gradient-to-br from-red-950 via-red-900 to-gray-900' : 'bg-gradient-to-br from-gray-900 via-blue-900 to-gray-900'}`}>
-      
-      {/* Hero Banner HUD */}
-      <div 
-        className="w-full flex items-center justify-between px-8 border-b border-red-500/30 flex-shrink-0 relative z-20 shadow-2xl"
-        style={{ backgroundColor: '#0D1B2A', height: '120px' }}
+    <div
+      className="h-screen flex flex-col overflow-hidden"
+      style={{ background: 'var(--aegis-bg-base)', color: 'var(--aegis-text-primary)', fontFamily: 'Inter, sans-serif' }}
+    >
+      {/* ── TOP BAR (48px) ─────────────────────────────────────── */}
+      <header
+        className="flex-shrink-0 flex items-center justify-between px-5 z-30 transition-all duration-500"
+        style={{
+          height: '48px',
+          background: mciState.active ? 'rgba(127,29,29,0.97)' : 'var(--aegis-bg-surface)',
+          borderBottom: `1px solid ${mciState.active ? 'rgba(239,68,68,0.5)' : 'var(--aegis-border)'}`,
+        }}
       >
-        <div className="flex flex-col justify-center h-full">
-          <h1 className="text-[20px] font-bold text-white mb-2 tracking-wide">
-            When disasters strike, 112 gets overwhelmed. <span className="text-red-400">AEGIS ensures no emergency is missed.</span>
-          </h1>
-          <p className="text-gray-400 text-sm font-medium tracking-wider uppercase">
-            AI-powered triage and dispatch for India's emergency services.
-          </p>
-        </div>
-        
-        <div className="flex gap-8 items-center h-full">
-          <div className="flex flex-col items-center">
-            <span className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-2 opacity-80">Calls Processed</span>
-            <div className="bg-red-500/10 border border-red-500/20 px-4 py-2 rounded-lg shadow-[0_0_15px_rgba(239,68,68,0.15)]">
-              <span className="text-3xl font-mono font-bold text-red-500 tracking-wider">
-                {heroMetrics.cumulativeIncidents.toString().padStart(3, '0')}
-              </span>
-            </div>
-          </div>
-          
-          <div className="flex flex-col items-center">
-            <span className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-2 opacity-80">Resources Deployed</span>
-            <div className="bg-red-500/10 border border-red-500/20 px-4 py-2 rounded-lg shadow-[0_0_15px_rgba(239,68,68,0.15)]">
-              <span className="text-3xl font-mono font-bold text-red-500 tracking-wider">
-                {heroMetrics.cumulativeResources.toString().padStart(3, '0')}
-              </span>
-            </div>
-          </div>
-          
-          <div className="flex flex-col items-center">
-            <span className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-2 opacity-80">Avg Triage Time</span>
-            <div className="bg-red-500/10 border border-red-500/20 px-4 py-2 rounded-lg shadow-[0_0_15px_rgba(239,68,68,0.15)] flex items-baseline gap-1">
-              <span className="text-3xl font-mono font-bold text-red-500 tracking-wider">
-                {avgTriageTime}
-              </span>
-              <span className="text-xs font-bold text-red-400/70 uppercase">s</span>
-            </div>
-          </div>
-
-          <div className="flex flex-col items-center">
-            <span className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-2 opacity-80">Hoax Calls Intercepted</span>
-            <div className="bg-amber-500/10 border border-amber-500/20 px-4 py-2 rounded-lg shadow-[0_0_15px_rgba(245,158,11,0.15)]">
-              <span className="text-3xl font-mono font-bold text-amber-500 tracking-wider">
-                {heroMetrics.hoaxCallsIntercepted.toString().padStart(3, '0')}
-              </span>
-            </div>
-          </div>
-
-          <div className="flex flex-col items-center">
-            <span className="text-gray-400 text-[10px] font-bold uppercase tracking-widest mb-2 opacity-80">Golden Hour Success</span>
-            <div className="bg-green-500/10 border border-green-500/20 px-4 py-2 rounded-lg shadow-[0_0_15px_rgba(34,197,94,0.15)] flex items-baseline gap-0.5">
-              <span className="text-3xl font-mono font-bold text-green-500 tracking-wider">
-                {goldenHourRate}
-              </span>
-              <span className="text-lg font-bold text-green-500">%</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Secondary Header */}
-      <header className={`glass p-3 border-b flex items-center justify-between z-10 shadow-lg flex-shrink-0 transition-all duration-700 ${mciState.active ? 'border-red-500/60 bg-red-950/40' : 'border-blue-500/30'}`}>
+        {/* Left: wordmark */}
         <div className="flex items-center gap-3">
-          <div className={`w-10 h-10 bg-gradient-to-br from-blue-500 to-emerald-500 rounded-lg flex items-center justify-center font-bold text-lg shadow-lg transition-all duration-300 ${isLogoGlowing ? 'shadow-[0_0_20px_rgba(56,189,248,0.8)] animate-pulse scale-110' : ''}`}>
-            A
-          </div>
-          <div className="flex items-center gap-4">
-            <h2 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-emerald-400">
-              Command Center
-            </h2>
-            <button 
-              onClick={generateAAR}
-              disabled={isGeneratingReport}
-              className="bg-gray-800 border border-gray-600 hover:bg-gray-700 text-[10px] text-gray-300 font-bold py-1.5 px-3 rounded shadow transition-colors disabled:opacity-50 uppercase tracking-widest"
-            >
-              {isGeneratingReport ? "GENERATING..." : "GENERATE AAR"}
-            </button>
-          </div>
+          <div
+            className={`w-7 h-7 rounded flex items-center justify-center font-black text-sm text-white transition-all duration-300 ${isLogoGlowing ? 'scale-110' : ''}`}
+            style={{ background: 'var(--aegis-accent)' }}
+          >A</div>
+          <span className="font-semibold text-sm" style={{ color: 'var(--aegis-text-primary)' }}>AEGIS</span>
+          <span className="text-xs" style={{ color: 'var(--aegis-text-muted)' }}>National Emergency Operations Centre</span>
         </div>
+
+        {/* Centre: hero stats */}
         <div className="flex items-center gap-6">
+          {[
+            { label: 'Calls', value: heroMetrics.cumulativeIncidents.toString().padStart(3,'0'), color: 'var(--aegis-critical)' },
+            { label: 'Resources', value: heroMetrics.cumulativeResources.toString().padStart(3,'0'), color: 'var(--aegis-info)' },
+            { label: 'Avg Triage', value: `${avgTriageTime}s`, color: 'var(--aegis-medium)' },
+            { label: 'Hoax Caught', value: heroMetrics.hoaxCallsIntercepted.toString().padStart(3,'0'), color: 'var(--aegis-high)' },
+            { label: 'Golden Hour', value: `${goldenHourRate}%`, color: 'var(--aegis-low)' },
+          ].map(stat => (
+            <div key={stat.label} className="flex items-baseline gap-1.5">
+              <span className="font-mono font-semibold text-base" style={{ color: stat.color }}>{stat.value}</span>
+              <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--aegis-text-muted)' }}>{stat.label}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Right: status + actions */}
+        <div className="flex items-center gap-4">
+          {mciState.active && (
+            <span className="badge badge-critical animate-pulse-slow text-[10px] tracking-widest">🚨 MCI ACTIVE — {mciState.zone}</span>
+          )}
+          <div className="flex items-center gap-3 text-xs">
+            <div className="flex items-center gap-1.5">
+              <div className={`status-dot ${metrics.backend_status === 'healthy' ? 'status-dot-online' : 'status-dot-offline'}`}></div>
+              <span style={{ color: 'var(--aegis-text-secondary)' }}>API</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className={`status-dot ${metrics.llm_ready ? 'status-dot-online' : 'status-dot-warning'}`}></div>
+              <span style={{ color: 'var(--aegis-text-secondary)' }}>LLM</span>
+            </div>
+          </div>
           <VoiceCommand onGlow={setIsLogoGlowing} />
-          <div className="flex items-center gap-2">
-            <div className={`w-3 h-3 rounded-full ${
-              metrics.backend_status === 'healthy' 
-                ? 'bg-green-400 shadow-[0_0_10px_rgba(74,222,128,0.8)] animate-pulse' 
-                : 'bg-red-500'
-            }`}></div>
-            <span className="text-sm font-medium">API</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className={`w-3 h-3 rounded-full ${
-              metrics.llm_ready 
-                ? 'bg-green-400 shadow-[0_0_10px_rgba(74,222,128,0.8)]' 
-                : 'bg-yellow-500'
-            }`}></div>
-            <span className="text-sm font-medium">LLM</span>
-          </div>
-          <div className="text-xs bg-blue-500/20 px-3 py-1 rounded-full border border-blue-400/30">
-            {metrics.model}
-          </div>
+          <button onClick={generateAAR} disabled={isGeneratingReport} className="btn btn-ghost btn-sm">
+            {isGeneratingReport ? 'Generating…' : 'Generate AAR'}
+          </button>
         </div>
       </header>
 
-      {/* MCI Alert Banner */}
-      {mciState.active && (
-        <div className="w-full bg-red-700/80 border-y-2 border-red-400 flex items-center justify-center gap-4 py-2 flex-shrink-0 z-30" style={{animation: 'pulse 1s ease-in-out infinite'}}>
-          <span className="text-2xl">🚨</span>
-          <span className="font-black text-white tracking-[0.2em] uppercase text-sm">MCI ACTIVE — {mciState.zone} — NDMA Mass Casualty Protocol Engaged</span>
-          <span className="text-2xl">🚨</span>
-        </div>
-      )}
+      {/* ── MAIN AREA ──────────────────────────────────────────── */}
+      <div className="flex flex-1 overflow-hidden">
 
-      {/* Main Grid */}
-      <div className="flex-1 grid grid-cols-1 gap-4 p-4 overflow-hidden lg:grid-cols-12">
-        {/* Left: Map + Queue + Console */}
-        <div className="lg:col-span-8 flex flex-col gap-4 min-h-0">
-          <MapView incidents={incidents} resources={resources} />
-          <div className="flex-1 min-h-0 flex gap-4">
-            <div className="flex-1">
-              <PriorityQueue incidents={incidents} onResolve={resolveIncident} />
-            </div>
-            <div className="w-1/3">
-              <SimulatorConsole />
-            </div>
+        {/* ── LEFT SIDEBAR (280px) ─────────────────── */}
+        <aside
+          className="flex-shrink-0 flex flex-col overflow-hidden"
+          style={{ width: '280px', background: 'var(--aegis-bg-surface)', borderRight: '1px solid var(--aegis-border)' }}
+        >
+          {/* System Health */}
+          <div className="section-header">System Status</div>
+          <div className="p-3 flex flex-col gap-2" style={{ borderBottom: '1px solid var(--aegis-border)' }}>
+            {[
+              { label: 'Backend API', status: metrics.backend_status === 'healthy' ? 'online' : 'offline', val: metrics.backend_status || 'Unknown' },
+              { label: 'LLM Engine', status: metrics.llm_ready ? 'online' : 'warning', val: metrics.model ? metrics.model.split('/').pop() : 'Unavailable' },
+              { label: 'System Load', status: metrics.load === 'High' ? 'offline' : metrics.load === 'Medium' ? 'warning' : 'online', val: metrics.load || 'Low' },
+            ].map(row => (
+              <div key={row.label} className="flex items-center justify-between text-xs">
+                <div className="flex items-center gap-2">
+                  <div className={`status-dot status-dot-${row.status}`}></div>
+                  <span style={{ color: 'var(--aegis-text-secondary)' }}>{row.label}</span>
+                </div>
+                <span className="font-mono text-[11px]" style={{ color: 'var(--aegis-text-muted)' }}>{row.val}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Live Call Feed */}
+          <div className="section-header">Live Call Simulator</div>
+          <div className="flex-shrink-0" style={{ borderBottom: '1px solid var(--aegis-border)' }}>
+            <SimulatorConsole />
+          </div>
+
+          {/* Resource Summary */}
+          <div className="section-header">Field Resources</div>
+          <div className="flex-1 overflow-y-auto custom-scrollbar p-3">
+            <ResourceGrid resources={resources} prepositionOrders={threatIntelligence?.preposition_orders} />
+          </div>
+        </aside>
+
+        {/* ── CENTRE: MAP + QUEUE ─────────────────── */}
+        <div className="flex flex-col" style={{ flex: '0 0 55%', minWidth: 0, borderRight: '1px solid var(--aegis-border)' }}>
+          <div className="flex-1 overflow-hidden">
+            <MapView incidents={incidents} resources={resources} />
+          </div>
+          <div style={{ height: '340px', borderTop: '1px solid var(--aegis-border)', overflow: 'hidden' }}>
+            <PriorityQueue incidents={incidents} onResolve={resolveIncident} />
           </div>
         </div>
 
-        {/* Right: Metrics + Resources + Feed */}
-        <div className="lg:col-span-4 flex flex-col gap-4 overflow-y-auto min-h-0 pr-1 custom-scrollbar">
-          <MCIPanel mciState={mciState} />
+        {/* ── RIGHT PANELS ─────────────────────────── */}
+        <div className="flex-1 flex flex-col overflow-y-auto custom-scrollbar" style={{ minWidth: 0 }}>
+          {mciState.active && <MCIPanel mciState={mciState} />}
           <ThreatIntelligencePanel data={threatIntelligence} />
           <Metrics data={metrics} />
           <ChannelChart incidents={incidents} />
@@ -470,11 +450,10 @@ function App() {
           <CallbackQueue callbacks={callbacks} onSimulateResponse={handleSimulateCallbackResponse} />
           <NovelScenarioLog incidents={incidents} />
           <ReviewQueue incidents={incidents} />
-          <ResourceGrid resources={resources} prepositionOrders={threatIntelligence?.preposition_orders} />
           <AgentFeed events={agentEvents} />
         </div>
       </div>
-      
+
       <AARModal data={reportData} onClose={() => setReportData(null)} />
     </div>
   );

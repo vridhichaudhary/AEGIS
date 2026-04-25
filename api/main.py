@@ -171,81 +171,67 @@ async def mci_surge_detector_loop():
                 except ValueError:
                     pass
         
-        if not recent_incidents:
-            if MCI_STATE["active"]:
-                # Auto-resolve
-                MCI_STATE["active"] = False
-                MCI_STATE["details"] = None
-                await manager.broadcast({"type": "mci_resolved", "payload": {"zone": MCI_STATE["zone"]}})
-            continue
-
         trigger = False
         zone = "Unknown Region"
 
-        # 1. 3+ incidents within 1km radius in last 5 minutes
-        recent_5m = [i for i in recent_incidents if (now - datetime.fromisoformat(i["timestamp"])).total_seconds() <= 300]
-        for i, inc1 in enumerate(recent_5m):
-            cluster_count = 1
-            lat1 = inc1.get("location", {}).get("latitude")
-            lng1 = inc1.get("location", {}).get("longitude")
-            if not lat1 or not lng1: continue
-            
-            for inc2 in recent_5m[i+1:]:
-                lat2 = inc2.get("location", {}).get("latitude")
-                lng2 = inc2.get("location", {}).get("longitude")
-                if not lat2 or not lng2: continue
-                dist = haversine_distance(lat1, lng1, lat2, lng2)
-                if dist <= 1.0:
-                    cluster_count += 1
-            if cluster_count >= 3:
-                trigger = True
-                zone = inc1.get("location", {}).get("raw_text", "Clustered Area")
-                break
-
-        # 2. 2+ P1 incidents in last 3 mins
-        if not trigger:
-            recent_3m_p1 = [i for i in recent_incidents if i.get("priority") == "P1" and (now - datetime.fromisoformat(i["timestamp"])).total_seconds() <= 180]
-            if len(recent_3m_p1) >= 2:
-                trigger = True
-                zone = recent_3m_p1[0].get("location", {}).get("raw_text", "Critical Zone")
-
-        # 3. Victim count > 15 in last 10 mins
-        if not trigger:
-            total_victims = sum(int(i.get("incident_type", {}).get("victim_count", 0) or 0) for i in recent_incidents)
-            if total_victims >= 15:
-                trigger = True
-                zone = "Regional Zone"
-
-        # 4. Cascade Prediction > 85%
-        if not trigger and LATEST_THREAT_INTEL:
-            for pred in LATEST_THREAT_INTEL.get("cascade_predictions", []):
-                if pred.get("confidence_percentage", 0) > 85:
+        if recent_incidents:
+            # 1. 3+ incidents within 1km radius in last 5 minutes
+            recent_5m = [i for i in recent_incidents if (now - datetime.fromisoformat(i["timestamp"])).total_seconds() <= 300]
+            for i, inc1 in enumerate(recent_5m):
+                cluster_count = 1
+                lat1 = inc1.get("location", {}).get("latitude")
+                lng1 = inc1.get("location", {}).get("longitude")
+                if not lat1 or not lng1: continue
+                
+                for inc2 in recent_5m[i+1:]:
+                    lat2 = inc2.get("location", {}).get("latitude")
+                    lng2 = inc2.get("location", {}).get("longitude")
+                    if not lat2 or not lng2: continue
+                    dist = haversine_distance(lat1, lng1, lat2, lng2)
+                    if dist <= 1.0:
+                        cluster_count += 1
+                if cluster_count >= 3:
                     trigger = True
-                    zone = LATEST_THREAT_INTEL.get("risk_zones", ["Predicted Danger Zone"])[0]
+                    zone = inc1.get("location", {}).get("raw_text", "Clustered Area")
                     break
+
+            # 2. 2+ P1 incidents in last 3 mins
+            if not trigger:
+                recent_3m_p1 = [i for i in recent_incidents if i.get("priority") == "P1" and (now - datetime.fromisoformat(i["timestamp"])).total_seconds() <= 180]
+                if len(recent_3m_p1) >= 2:
+                    trigger = True
+                    zone = recent_3m_p1[0].get("location", {}).get("raw_text", "Critical Zone")
+
+            # 3. Victim count > 15 in last 10 mins
+            if not trigger:
+                total_victims = sum(int(i.get("incident_type", {}).get("victim_count", 0) or 0) for i in recent_incidents)
+                if total_victims >= 15:
+                    trigger = True
+                    zone = "Regional Zone"
+
+            # 4. Cascade Prediction > 85%
+            if not trigger and LATEST_THREAT_INTEL:
+                for pred in LATEST_THREAT_INTEL.get("cascade_predictions", []):
+                    if pred.get("confidence_percentage", 0) > 85:
+                        trigger = True
+                        zone = LATEST_THREAT_INTEL.get("risk_zones", ["Predicted Danger Zone"])[0]
+                        break
 
         if trigger and not MCI_STATE["active"]:
             MCI_STATE["active"] = True
             MCI_STATE["zone"] = zone
-            
-            # Request LLM protocol
             resources = {"ambulances_available": random.randint(2, 6), "fire_trucks_available": random.randint(1, 4)}
             mci_response = await mci_agent.generate_mci_response(zone, len(recent_incidents), resources)
             MCI_STATE["details"] = mci_response
-            
-            await manager.broadcast({
-                "type": "mci_activation",
-                "payload": {
-                    "zone": zone,
-                    "details": mci_response
-                }
-            })
+            await manager.broadcast({"type": "mci_activation", "payload": {"zone": zone, "details": mci_response}})
             
         elif not trigger and MCI_STATE["active"]:
-            # Auto-resolve
+            # MCI Resolved - Generate AAR
+            current_zone = MCI_STATE["zone"]
+            aar_report = await mci_agent.generate_aar_report(current_zone, recent_incidents)
             MCI_STATE["active"] = False
             MCI_STATE["details"] = None
-            await manager.broadcast({"type": "mci_resolved", "payload": {"zone": MCI_STATE["zone"]}})
+            await manager.broadcast({"type": "mci_resolved", "payload": {"zone": current_zone, "aar_report": aar_report}})
 
 
 class EmergencyCallRequest(BaseModel):
