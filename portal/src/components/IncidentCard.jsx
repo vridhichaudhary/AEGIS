@@ -156,13 +156,13 @@ const IncidentCard = ({ incident, onClick, onResolve, onAddNote, mViewTimeline, 
           style={{ top: contextMenu.y, left: contextMenu.x }}
           onMouseLeave={closeContextMenu}
         >
-          <div className="context-menu-item" onClick={() => { onResolve(incident.incident_id); closeContextMenu(); }}>
+          <div className="context-menu-item" onClick={() => { onResolve?.(incident.incident_id); closeContextMenu(); }}>
             <CheckCircle2 size={12} className="text-aegis-low" /> Mark Resolved
           </div>
-          <div className="context-menu-item" onClick={() => { onAddNote(incident); closeContextMenu(); }}>
+          <div className="context-menu-item" onClick={() => { onAddNote?.(incident); closeContextMenu(); }}>
             <Copy size={12} className="text-aegis-info" /> Add Note
           </div>
-          <div className="context-menu-item" onClick={() => { mViewTimeline(incident); closeContextMenu(); }}>
+          <div className="context-menu-item" onClick={() => { mViewTimeline?.(incident); closeContextMenu(); }}>
             <MoreHorizontal size={12} className="text-aegis-text-muted" /> View Timeline
           </div>
         </div>

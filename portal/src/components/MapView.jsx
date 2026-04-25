@@ -37,9 +37,10 @@ const MapView = ({ incidents = [], resources = [], focusOn = null }) => {
         attributionControl: false 
       }).setView(center, 12);
       
-      // Light Professional Tiles (Voyager)
-      layersRef.current.street = L.tileLayer('https://{s}.tile.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      // Standard OpenStreetMap Tiles (More reliable HTTPS)
+      layersRef.current.street = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
       }).addTo(mapInstance.current);
 
       layersRef.current.satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {

@@ -39,7 +39,8 @@ function App() {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
+    const PRODUCTION_BACKEND = 'https://aegis-5lpx.onrender.com';
+    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : PRODUCTION_BACKEND);
     
     const loadData = async () => {
       try {
@@ -129,7 +130,7 @@ function App() {
   }
 
   const resolveIncident = async (id) => {
-    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
+    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : 'https://aegis-5lpx.onrender.com');
     await fetch(`${apiBase}/api/v1/incidents/${id}/resolve`, { method: 'POST' });
     setIsPanelOpen(false);
   };

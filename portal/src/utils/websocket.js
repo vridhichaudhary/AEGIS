@@ -3,7 +3,7 @@ const defaultWebSocketUrl = () => {
     return import.meta.env.VITE_WS_URL;
   }
 
-  const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
+  const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : 'https://aegis-5lpx.onrender.com');
   if (apiBase.startsWith('http')) {
     const url = new URL(apiBase);
     const protocol = (url.protocol === 'https:' || !import.meta.env.DEV) ? 'wss:' : 'ws:';
