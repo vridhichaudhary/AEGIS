@@ -70,11 +70,22 @@ const IncidentMiniMap = ({ incident, depots = [] }) => {
       depotMarkersRef.current.forEach(m => mapInstance.current.removeLayer(m));
       depotMarkersRef.current = [];
 
-      // Find top 3 nearest
+  // Find top 3 nearest — prefer category-relevant depot types
+      const cat = incident?.incident_type?.category || 'other';
+      const typePreference = {
+        'accident': ['ambulance', 'police', 'fire'],
+        'medical':  ['ambulance', 'police', 'fire'],
+        'fire':     ['fire', 'ambulance', 'rescue'],
+        'violence': ['police', 'ambulance', 'fire'],
+        'natural_disaster': ['rescue', 'ambulance', 'fire'],
+      };
+      const preferred = typePreference[cat] || ['ambulance', 'police', 'fire'];
+
       const nearby = depots.map(d => ({
           ...d,
-          dist: haversineDistance(lat, lng, d.lat, d.lng)
-      })).sort((a, b) => a.dist - b.dist).slice(0, 3);
+          dist: haversineDistance(lat, lng, d.lat, d.lng),
+          typeOrder: preferred.indexOf(d.type) >= 0 ? preferred.indexOf(d.type) : 99,
+      })).sort((a, b) => a.typeOrder !== b.typeOrder ? a.typeOrder - b.typeOrder : a.dist - b.dist).slice(0, 3);
 
       nearby.forEach(depot => {
           const emoji = depot.type === 'fire' ? '🚒' : depot.type === 'police' ? '👮' : '🏥';
@@ -221,12 +232,22 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
     }
   }, [latestCitizenIncident]);
 
+  // Sort by incident-category relevance first, then by distance
+  const getTypeOrder = (type, cat) => {
+    const pref = { accident: ['ambulance','police','fire'], medical: ['ambulance','police','fire'],
+      fire: ['fire','ambulance','rescue'], violence: ['police','ambulance','fire'],
+      natural_disaster: ['rescue','ambulance','fire'] };
+    const order = pref[cat] || ['ambulance','police','fire'];
+    const idx = order.indexOf(type);
+    return idx >= 0 ? idx : 99;
+  };
+  const incidentCat = incident?.incident_type?.category || 'other';
   const nearbyStations = incident?.location?.latitude ? allDepots.map(d => {
     const dist = haversineDistance(incident.location.latitude, incident.location.longitude, d.lat, d.lng);
     const speed = d.type === 'police' ? 45 : d.type === 'fire' ? 35 : 40;
     const eta = (dist / speed) * 60;
-    return { depot: d, distance: dist, eta };
-  }).sort((a, b) => a.distance - b.distance).slice(0, 3) : [];
+    return { depot: d, distance: dist, eta, typeOrder: getTypeOrder(d.type, incidentCat) };
+  }).sort((a, b) => a.typeOrder !== b.typeOrder ? a.typeOrder - b.typeOrder : a.distance - b.distance).slice(0, 3) : [];
 
   const startVoice = useCallback(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;

@@ -72,8 +72,10 @@ const IncidentCard = ({ incident, onClick, onResolve, onAddNote, mViewTimeline, 
         {/* TOP ROW */}
         <div className="flex justify-between items-center gap-2">
           <div className="flex items-center gap-2">
-            <span className={`badge badge-${incident.priority.toLowerCase()} min-w-[80px] justify-center`}>
-              {incident.priority} {isCritical ? 'CRITICAL' : 'ALERT'}
+            <span className={`badge badge-${incident.priority.toLowerCase()} min-w-[90px] justify-center`}>
+              {incident.priority} {
+                { P1: 'CRITICAL', P2: 'SERIOUS', P3: 'MODERATE', P4: 'MINOR', P5: 'NON-EMERGENCY' }[incident.priority] || 'ALERT'
+              }
             </span>
             <div className="flex items-center gap-2 ml-1">
               <CategoryIcon category={incident.incident_type?.category} />

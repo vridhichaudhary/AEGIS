@@ -158,6 +158,19 @@ class TriageAgent(BaseAgent):
         if any(token in text for token in ["heat stroke", "loo", "heatstroke"]):
             return {"priority_level": "P2", "priority_justification": "Heat stroke requires immediate cooling and fluids.", "required_resources": [{"type": "ambulance", "quantity": 1, "specialized": False}], "estimated_severity": "serious", "golden_hour_at_risk": False}
 
+        if category == "accident":
+            # Minor accident — still needs medical + traffic management
+            return {
+                "priority_level": "P3",
+                "priority_justification": "Minor road accident requires medical assessment and traffic management.",
+                "required_resources": [
+                    {"type": "ambulance", "quantity": 1, "specialized": False},
+                    {"type": "police", "quantity": 1, "specialized": False},
+                ],
+                "estimated_severity": "moderate",
+                "golden_hour_at_risk": False,
+            }
+
         return {
             "priority_level": "P4",
             "priority_justification": "Insufficient evidence of an active emergency after validation.",
