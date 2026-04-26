@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { getApiBase } from '../utils/runtimeConfig';
 
 // Fix Leaflet default icon
 delete L.Icon.Default.prototype._getIconUrl;
@@ -10,7 +11,7 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://aegis-5lpx.onrender.com';
+const API_BASE = getApiBase();
 
 const PRIORITY_COLORS = { P1: '#C53030', P2: '#C05621', P3: '#B7791F', P4: '#2F855A', P5: '#718096' };
 const STATUS_STEPS = ['Received', 'Parsing', 'Triaged', 'Dispatched'];

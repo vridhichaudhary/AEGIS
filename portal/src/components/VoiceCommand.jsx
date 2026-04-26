@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Mic, MicOff, MessageSquare } from 'lucide-react';
+import { getApiBase } from '../utils/runtimeConfig';
 
 const VoiceCommand = ({ onGlow }) => {
   const [isListening, setIsListening] = useState(false);
@@ -52,7 +53,7 @@ const VoiceCommand = ({ onGlow }) => {
     // Add to log as user
     setVoiceLog(prev => [{ speaker: 'user', text: transcript }, ...prev].slice(0, 5));
     
-    const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
+    const apiBase = getApiBase();
     try {
       const response = await fetch(`${apiBase}/api/v1/command`, {
         method: 'POST',

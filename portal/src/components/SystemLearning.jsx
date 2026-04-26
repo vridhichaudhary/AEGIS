@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { ChevronDown, ChevronUp, BrainCircuit } from 'lucide-react';
+import { getApiBase } from '../utils/runtimeConfig';
 
 const SystemLearning = () => {
   const [insight, setInsight] = useState(null);
@@ -7,7 +8,7 @@ const SystemLearning = () => {
 
   const fetchInsights = async () => {
     try {
-      const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
+      const apiBase = getApiBase();
       const res = await fetch(`${apiBase}/api/v1/learning/insights`);
       if (res.ok) {
         const data = await res.json();
@@ -27,7 +28,7 @@ const SystemLearning = () => {
   const handleApply = async (rule) => {
     if (window.confirm(`Deploy this optimization to AEGIS Engine?\n\n"${rule}"`)) {
       try {
-        const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
+        const apiBase = getApiBase();
         await fetch(`${apiBase}/api/v1/learning/apply`, { method: 'POST' });
         fetchInsights();
       } catch (e) {

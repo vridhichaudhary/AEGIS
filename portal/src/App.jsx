@@ -3,8 +3,9 @@ import CitizenPanel from './panels/CitizenPanel';
 import AdminPanel from './panels/AdminPanel';
 import AARModal from './components/AARModal';
 import { connectWebSocket } from './utils/websocket';
+import { getApiBase } from './utils/runtimeConfig';
 
-const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://aegis-5lpx.onrender.com';
+const API_BASE = getApiBase();
 
 function App() {
   const [activePanel, setActivePanel] = useState('citizen'); // 'citizen' | 'admin'

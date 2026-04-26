@@ -1,5 +1,6 @@
 import React, { useState, useRef } from 'react';
 import { PhoneCall, Mic, UploadCloud, Loader, Send, Activity, FileAudio } from 'lucide-react';
+import { getApiBase } from '../utils/runtimeConfig';
 
 const transcripts = [
   "Help, aag lag gayi hai Sector 14 market mein, 3 log fas gaye hain ander!",
@@ -16,8 +17,7 @@ const SimulatorConsole = () => {
   const [feedback, setFeedback] = useState('');
   const fileInputRef = useRef(null);
 
-  const PRODUCTION_BACKEND = 'https://aegis-5lpx.onrender.com';
-  const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : PRODUCTION_BACKEND);
+  const apiBase = getApiBase();
 
   const generateCallerId = () => `+91-112-${Math.floor(10000000 + Math.random() * 90000000)}`;
 

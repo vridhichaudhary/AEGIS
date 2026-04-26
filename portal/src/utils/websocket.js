@@ -1,22 +1,7 @@
+import { getWebSocketBase } from './runtimeConfig';
+
 const defaultWebSocketUrl = () => {
-  // 1. Check for explicit WS URL override
-  if (import.meta.env.VITE_WS_URL) {
-    return import.meta.env.VITE_WS_URL;
-  }
-
-  const apiBase =
-    import.meta.env.VITE_API_BASE_URL ||
-    (import.meta.env.DEV ? 'http://localhost:8000' : 'https://aegis-5lpx.onrender.com');
-
-  if (apiBase.startsWith('http')) {
-    const url = new URL(apiBase);
-    const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
-    return `${protocol}//${url.host}/ws`;
-  }
-
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = import.meta.env.DEV ? 'localhost:8000' : window.location.host;
-  return `${protocol}//${host}/ws`;
+  return getWebSocketBase();
 };
 
 export const connectWebSocket = (onMessage, url = defaultWebSocketUrl()) => {

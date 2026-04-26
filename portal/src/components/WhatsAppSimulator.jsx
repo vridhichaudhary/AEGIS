@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { getApiBase } from '../utils/runtimeConfig';
 
 const TEMPLATES = [
   {
@@ -22,7 +23,7 @@ const WhatsAppSimulator = () => {
   const [messages, setMessages] = useState([]);
   const [sending, setSending] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState(null);
-  const apiBase = import.meta.env.VITE_API_BASE_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
+  const apiBase = getApiBase();
 
   const sendMessage = async (template) => {
     if (sending) return;
