@@ -4,7 +4,7 @@ langchain==0.3.0
 langchain-google-genai==2.0.0
 langchain-groq==0.2.1
 langchain-core>=0.3.15
-langsmith==0.1.77
+langsmith>=0.1.125
 
 # API & Web
 fastapi==0.115.0
