@@ -140,6 +140,7 @@ HINGLISH_MAP = {
     "madad karo": "help",
     "bachao": "help",
     "help karo": "help",
+    "cannaught": "connaught",
 }
 
 
@@ -185,9 +186,9 @@ class DeduplicationAgent:
       - Cosine similarity of embeddings ≥ 0.80
     """
 
-    SIMILARITY_THRESHOLD = 0.80
+    SIMILARITY_THRESHOLD = 0.75
     TIME_WINDOW_MINUTES = 15
-    RADIUS_KM = 0.5
+    RADIUS_KM = 1.0
     MODEL_NAME = "paraphrase-multilingual-MiniLM-L12-v2"
 
     def __init__(self):
@@ -249,12 +250,11 @@ class DeduplicationAgent:
         cutoff = now - timedelta(minutes=self.TIME_WINDOW_MINUTES)
         candidates = []
         for entry in self._store:
-            if entry["category"] != category:
-                continue
             if entry["timestamp"] < cutoff:
                 continue
             dist = haversine_km(lat, lng, entry["lat"], entry["lng"])
             if dist <= self.RADIUS_KM:
+                # Add if category matches OR if it's very close (semantic check will do the rest)
                 candidates.append(entry)
         return candidates
 

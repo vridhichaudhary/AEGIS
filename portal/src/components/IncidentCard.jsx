@@ -80,6 +80,11 @@ const IncidentCard = ({ incident, onClick, onResolve, onAddNote, mViewTimeline, 
               <span className="text-xs font-bold text-slate-800 uppercase tracking-tight">
                 {incident.incident_type?.category?.replace('_', ' ') || 'Emergency'}
               </span>
+              {incident.merged_count > 1 && (
+                <span className="px-1.5 py-0.5 bg-orange-100 text-orange-700 text-[9px] font-black rounded uppercase tracking-tighter ml-1">
+                  +{incident.merged_count - 1} Merged
+                </span>
+              )}
             </div>
           </div>
           
@@ -131,7 +136,7 @@ const IncidentCard = ({ incident, onClick, onResolve, onAddNote, mViewTimeline, 
           </div>
 
           <div className="mono text-[10px] text-slate-500 font-bold bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-100">
-            {incident.assigned_resources?.[0]?.eta_minutes ? `${incident.assigned_resources[0].eta_minutes}m · 3.1km` : '--m'}
+            {incident.assigned_resources?.[0]?.eta_minutes ? `${incident.assigned_resources[0].eta_minutes}m · ${incident.assigned_resources[0].distance_km}km` : '--m'}
           </div>
         </div>
 

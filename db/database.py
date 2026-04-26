@@ -32,6 +32,7 @@ def init_db():
                 golden_hour_at_risk INTEGER DEFAULT 0,
                 created_at TEXT,
                 resolved_at TEXT,
+                merged_count INTEGER DEFAULT 1,
                 agent_trail TEXT  -- JSON array of agent events
             )
         ''')
@@ -106,8 +107,9 @@ def save_incident(incident: Dict[str, Any]):
             INSERT OR REPLACE INTO incidents (
                 id, transcript, category, location, lat, lng, priority, status,
                 assigned_resources, eta_minutes, authenticity_score, is_duplicate,
-                golden_hour_deadline, golden_hour_at_risk, created_at, resolved_at, agent_trail
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                golden_hour_deadline, golden_hour_at_risk, created_at, resolved_at,
+                merged_count, agent_trail
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             incident.get("incident_id"),
             incident.get("transcript", incident.get("raw_transcript", "")),
@@ -124,7 +126,8 @@ def save_incident(incident: Dict[str, Any]):
             incident.get("golden_hour_deadline"),
             1 if incident.get("golden_hour_at_risk") else 0,
             incident.get("timestamp", datetime.now().isoformat()),
-            None, # resolved_at is updated when status changes to RESOLVED
+            None, # resolved_at
+            incident.get("merged_count", 1),
             json.dumps(incident.get("agent_trail", []))
         ))
         conn.commit()
@@ -155,6 +158,7 @@ def get_all_incidents(limit: int = 100) -> List[Dict[str, Any]]:
                 "golden_hour_at_risk": bool(row["golden_hour_at_risk"]),
                 "timestamp": row["created_at"],
                 "resolved_at": row["resolved_at"],
+                "merged_count": row["merged_count"] if "merged_count" in row.keys() else 1,
                 "agent_trail": json.loads(row["agent_trail"]) if row["agent_trail"] else []
             })
         return incidents

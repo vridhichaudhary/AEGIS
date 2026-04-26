@@ -460,10 +460,14 @@ async def publish_result(result: dict):
             orig["merged_count"] = orig.get("merged_count", 1) + 1
             orig["last_merged_at"] = datetime.now().isoformat()
             
-            # Broadcast update for the ORIGINAL incident (the one being called again)
+            # Broadcast update for the ORIGINAL incident
             await manager.broadcast({"type": "incident_update", "payload": orig})
             
-            # Also store the duplicate record (optional, but keep for history)
+            # Persist updated original to DB
+            asyncio.create_task(asyncio.to_thread(db.save_incident, orig))
+            
+            # Store the duplicate record as 'merged_duplicate' in active_incidents
+            incident_payload["dispatch_status"] = "merged_duplicate"
             active_incidents[result["incident_id"]] = incident_payload
     else:
         # Standard incident

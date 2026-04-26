@@ -19,6 +19,7 @@ class IndianGeocoder:
         "delhi": (28.6139, 77.2090),
         "new delhi": (28.6139, 77.2090),
         "connaught place": (28.6289, 77.2065),
+        "cannaught place": (28.6289, 77.2065),
         "cp": (28.6289, 77.2065),
         
         # Gurugram/Gurgaon Sectors
