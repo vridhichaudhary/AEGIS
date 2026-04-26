@@ -1,3 +1,22 @@
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
+
+// Fix Leaflet default icon
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+});
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'https://aegis-5lpx.onrender.com';
+
+const PRIORITY_COLORS = { P1: '#C53030', P2: '#C05621', P3: '#B7791F', P4: '#2F855A', P5: '#718096' };
+const STATUS_STEPS = ['Received', 'Parsing', 'Triaged', 'Dispatched'];
+
+const generateCallerId = () => `+91-112-${Math.floor(10000000 + Math.random() * 90000000)}`;
+
 // ─── Haversine Distance ────────────────────────────────────────────────────────
 const haversineDistance = (lat1, lon1, lat2, lon2) => {
   const R = 6371;
@@ -44,14 +63,12 @@ const IncidentMiniMap = ({ incident, depots = [] }) => {
       incidentMarkerRef.current = L.marker([lat, lng], { icon }).addTo(mapInstance.current);
       incidentMarkerRef.current.bindPopup(`<b>${incident.priority} — ${incident.incident_type?.category?.replace('_', ' ') || 'Emergency'}</b><br>${incident.location?.raw_text || ''}`).openPopup();
       
-      // Clear old depot markers
       depotMarkersRef.current.forEach(m => mapInstance.current.removeLayer(m));
       depotMarkersRef.current = [];
 
-      // Add nearby depots
       depots.forEach(depot => {
           const d = haversineDistance(lat, lng, depot.lat, depot.lng);
-          if (d < 10) { // Only show within 10km
+          if (d < 10) {
               const emoji = depot.type === 'fire' ? '🚒' : depot.type === 'police' ? '👮' : '🏥';
               const dHtml = `<div style="background:white;width:24px;height:24px;border-radius:50%;border:2px solid #3182CE;display:flex;align-items:center;justify-content:center;font-size:12px;box-shadow:0 2px 4px rgba(0,0,0,0.2);">${emoji}</div>`;
               const dIcon = L.divIcon({ className: '', html: dHtml, iconSize: [24, 24], iconAnchor: [12, 12] });
@@ -63,8 +80,6 @@ const IncidentMiniMap = ({ incident, depots = [] }) => {
 
       mapInstance.current.flyTo([lat, lng], 14, { animate: true, duration: 1 });
     }
-
-    return () => {};
   }, [incident, depots]);
 
   useEffect(() => {
@@ -83,7 +98,33 @@ const IncidentMiniMap = ({ incident, depots = [] }) => {
   );
 };
 
-// ... (StatusTrack remains same)
+// ─── Status Track ─────────────────────────────────────────────────────────────
+const StatusTrack = ({ status }) => {
+  const currentIdx = STATUS_STEPS.indexOf(status);
+  return (
+    <div className="sos-status-track">
+      {STATUS_STEPS.map((step, idx) => {
+        const done = idx < currentIdx;
+        const active = idx === currentIdx;
+        return (
+          <React.Fragment key={step}>
+            <div className={`sos-status-step ${done ? 'done' : active ? 'active' : 'pending'}`}>
+              <div className="sos-status-dot">
+                {done ? '✓' : active ? (
+                  <span className="sos-status-spinner" />
+                ) : idx + 1}
+              </div>
+              <span className="sos-status-label">{step}</span>
+            </div>
+            {idx < STATUS_STEPS.length - 1 && (
+              <div className={`sos-status-line ${done ? 'done' : ''}`} />
+            )}
+          </React.Fragment>
+        );
+      })}
+    </div>
+  );
+};
 
 // ─── Resource Card ────────────────────────────────────────────────────────────
 const ResourceCard = ({ resource }) => {
@@ -135,7 +176,13 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
   const [listening, setListening] = useState(false);
   const recognitionRef = useRef(null);
 
-  // Filter nearby stations for the current incident
+  useEffect(() => {
+    if (latestCitizenIncident) {
+      setIncident(latestCitizenIncident);
+      setStatusStep('Dispatched');
+    }
+  }, [latestCitizenIncident]);
+
   const nearbyStations = incident?.location?.latitude ? allDepots.map(d => {
     const dist = haversineDistance(incident.location.latitude, incident.location.longitude, d.lat, d.lng);
     const speed = d.type === 'police' ? 45 : d.type === 'fire' ? 35 : 40;
@@ -143,13 +190,61 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
     return { depot: d, distance: dist, eta };
   }).sort((a, b) => a.distance - b.distance).slice(0, 3) : [];
 
-  // ... (useEffect for incident pick up remains same)
+  const startVoice = useCallback(() => {
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      alert('Voice input not supported in this browser.');
+      return;
+    }
+    if (listening) {
+      recognitionRef.current?.stop();
+      setListening(false);
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    recognitionRef.current = recognition;
+    recognition.lang = 'hi-IN';
+    recognition.interimResults = true;
+    recognition.continuous = false;
 
-  // ... (startVoice & handleSubmit remain same)
+    recognition.onstart = () => setListening(true);
+    recognition.onresult = (e) => {
+      const transcript = Array.from(e.results).map(r => r[0].transcript).join('');
+      setText(transcript);
+    };
+    recognition.onend = () => setListening(false);
+    recognition.onerror = () => setListening(false);
+    recognition.start();
+  }, [listening]);
+
+  const handleSubmit = async (transcript = text) => {
+    if (!transcript.trim() || submitting) return;
+    setSubmitting(true);
+    setStatusStep('Received');
+    setIncident(null);
+
+    try {
+      setTimeout(() => setStatusStep('Parsing'), 600);
+      setTimeout(() => setStatusStep('Triaged'), 1500);
+
+      const res = await fetch(`${API_BASE}/api/v1/emergency/report`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ transcript, caller_id: callerId }),
+      });
+
+      if (!res.ok) throw new Error('Backend error');
+      setText('');
+    } catch (e) {
+      console.error('SOS submit failed:', e);
+      setStatusStep(null);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <div className="citizen-panel animate-fade-in">
-      {/* ... (Header remains same) ... */}
       <div className="citizen-header">
         <div className="citizen-logo-container">
           <div className="citizen-logo-pulse"></div>
@@ -166,9 +261,7 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
       </div>
 
       <div className="citizen-body">
-        {/* Left: SOS Input */}
         <div className="citizen-input-section">
-          {/* ... (Input UI remains same) ... */}
           <div className="sos-input-container card-premium">
             <h2 className="sos-input-heading">Report Emergency</h2>
             <p className="sos-input-sub">Speak clearly or type the situation. Help will be dispatched instantly.</p>
@@ -219,11 +312,9 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
           </div>
         </div>
 
-        {/* Right: Status + Map */}
         <div className="citizen-status-section">
           {statusStep ? (
             <div className="sos-response-container animate-fade-in">
-              {/* Status Track */}
               <div className="sos-card card-premium mb-6">
                 <div className="sos-card-header">
                   <h3 className="sos-card-title">📡 Live Status</h3>
@@ -233,10 +324,9 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
                     </span>
                   )}
                 </div>
-                <StatusTrack status={statusStep} priority={null} />
+                <StatusTrack status={statusStep} />
               </div>
 
-              {/* Map */}
               <div className="sos-card card-premium mb-6 overflow-hidden">
                 <div className="sos-card-header p-4">
                   <h3 className="sos-card-title">📍 Deployment Site</h3>
@@ -245,7 +335,6 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
                 <IncidentMiniMap incident={incident} depots={allDepots} />
               </div>
 
-              {/* Nearby Stations (New) */}
               {nearbyStations.length > 0 && (
                 <div className="sos-card card-premium mb-6">
                    <div className="sos-card-header p-4 border-b border-slate-50">
@@ -259,7 +348,6 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
                 </div>
               )}
 
-              {/* Dispatched Resources */}
               {incident?.assigned_resources?.length > 0 ? (
                 <div className="sos-card card-premium animate-slide-up">
                   <h3 className="sos-card-title p-4 border-b border-slate-100">🚨 Responders Dispatched</h3>
@@ -280,7 +368,6 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
               ) : null}
             </div>
           ) : (
-            /* ... (Idle state remains same) ... */
             <div className="citizen-idle-state animate-fade-in">
               <div className="citizen-idle-visual">
                 <div className="idle-ring ring-1"></div>
@@ -314,4 +401,3 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
 };
 
 export default CitizenPanel;
-
