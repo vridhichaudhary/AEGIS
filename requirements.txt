@@ -14,28 +14,20 @@ redis==5.0.8
 pydantic==2.9.0
 pydantic-settings==2.5.0
 
-# Lightweight NLP (NO heavy ML)
+# Lightweight NLP / similarity
 fuzzywuzzy==0.18.0
 python-Levenshtein==0.25.0
+networkx==3.3
 
 # Utils
 python-dotenv==1.0.1
-python-multipart==0.0.9
-aiohttp==3.10.0
-<<<<<<< HEAD
-networkx==3.3
-=======
 python-multipart==0.0.12
->>>>>>> 8f85542c (websocket issue resolved)
+aiohttp==3.10.0
 
 # Testing
 pytest==8.3.0
 pytest-asyncio==0.24.0
-<<<<<<< HEAD
 httpx==0.27.0
-=======
 
 # Audio Processing
 # openai-whisper==20231117
-python-multipart==0.0.9
->>>>>>> 8f85542c (websocket issue resolved)
