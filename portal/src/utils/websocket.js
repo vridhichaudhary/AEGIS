@@ -4,6 +4,7 @@ const defaultWebSocketUrl = () => {
     return import.meta.env.VITE_WS_URL;
   }
 
+<<<<<<< HEAD
   // 2. Derive from API Base URL
   const apiBase = import.meta.env.VITE_API_BASE_URL || 'https://aegis-5lpx.onrender.com';
   
@@ -16,42 +17,102 @@ const defaultWebSocketUrl = () => {
 
   // 3. Last resort fallback
   return 'wss://aegis-5lpx.onrender.com/ws';
+=======
+  const apiBase =
+    import.meta.env.VITE_API_BASE_URL ||
+    (import.meta.env.DEV ? 'http://localhost:8000' : 'https://aegis-5lpx.onrender.com');
+
+  if (apiBase.startsWith('http')) {
+    const url = new URL(apiBase);
+    const protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
+    return `${protocol}//${url.host}/ws`;
+  }
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = import.meta.env.DEV ? 'localhost:8000' : window.location.host;
+  return `${protocol}//${host}/ws`;
+>>>>>>> 8f85542c (websocket issue resolved)
 };
 
 export const connectWebSocket = (onMessage, url = defaultWebSocketUrl()) => {
-  let ws;
+  let ws = null;
   let retryCount = 0;
-  const maxRetries = 10;
-  
+  let reconnectTimer = null;
+  let heartbeatTimer = null;
+  let manuallyClosed = false;
+  const maxRetries = 8;
+  const heartbeatMs = 25000;
+
+  const clearTimers = () => {
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+  };
+
+  const startHeartbeat = () => {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = setInterval(() => {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ping', ts: Date.now() }));
+      }
+    }, heartbeatMs);
+  };
+
+  const scheduleReconnect = () => {
+    if (manuallyClosed || retryCount >= maxRetries) {
+      if (retryCount >= maxRetries) {
+        console.error('Max WebSocket reconnections reached.');
+      }
+      return;
+    }
+
+    const delay = Math.min(1000 * 2 ** retryCount, 15000);
+    reconnectTimer = setTimeout(() => {
+      retryCount += 1;
+      connect();
+    }, delay);
+  };
+
   const connect = () => {
-    // Add timestamp to bypass any handshake caching
-    const socketUrl = `${url}${url.includes('?') ? '&' : '?'}v=${Date.now()}`;
+    clearTimers();
+    const socketUrl = `${url}${url.includes('?') ? '&' : '?'}transport=websocket`;
     ws = new WebSocket(socketUrl);
 
     ws.onopen = () => {
-      console.log('Connected to WebSocket:', socketUrl);
       retryCount = 0;
+      startHeartbeat();
+      console.log('Connected to WebSocket:', socketUrl);
     };
 
     ws.onmessage = (event) => {
-      if (onMessage) onMessage(event);
+      try {
+        const parsed = JSON.parse(event.data);
+        if (parsed?.type === 'pong') {
+          return;
+        }
+      } catch {
+        // Non-JSON payloads should still reach the caller.
+      }
+
+      if (onMessage) {
+        onMessage(event);
+      }
     };
 
-    ws.onerror = (err) => {
-      console.error("WebSocket Error State:", ws.readyState);
-      console.error("WebSocket Connection failed to:", socketUrl);
-      console.error('Detailed Error:', err);
+    ws.onerror = (error) => {
+      console.error('WebSocket connection failed:', socketUrl, error);
     };
 
-    ws.onclose = () => {
-      console.log('WebSocket disconnected.');
-      if (retryCount < maxRetries) {
-        const delay = Math.min(1000 * Math.pow(2, retryCount), 30000);
-        console.log(`Retrying connection in ${delay/1000}s... (Attempt ${retryCount + 1}/${maxRetries})`);
-        setTimeout(connect, delay);
-        retryCount++;
-      } else {
-        console.error('Max WebSocket reconnections reached.');
+    ws.onclose = (event) => {
+      clearTimers();
+      if (!manuallyClosed) {
+        console.warn(`WebSocket disconnected (code ${event.code}). Reconnecting...`);
+        scheduleReconnect();
       }
     };
   };
@@ -60,10 +121,11 @@ export const connectWebSocket = (onMessage, url = defaultWebSocketUrl()) => {
 
   return {
     close: () => {
+      manuallyClosed = true;
+      clearTimers();
       if (ws) {
-        ws.onclose = null; // Prevent reconnection on intentional close
-        ws.close();
+        ws.close(1000, 'Client closed connection');
       }
-    }
+    },
   };
 };

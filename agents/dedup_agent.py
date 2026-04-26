@@ -212,11 +212,12 @@ class DeduplicationAgent:
             except Exception:
                 pass
 
-        # Load embedding model once at startup
-        if _ST_AVAILABLE:
+        # Load embedding model only when explicitly enabled.
+        # This prevents startup/runtime hangs from external model downloads.
+        if _ST_AVAILABLE and getattr(settings, "ENABLE_SEMANTIC_EMBEDDINGS", False):
             try:
                 t0 = time.time()
-                self.embedder = SentenceTransformer(self.MODEL_NAME)
+                self.embedder = SentenceTransformer(self.MODEL_NAME, local_files_only=True)
                 elapsed = time.time() - t0
                 print(f"[DeduplicationAgent] Loaded {self.MODEL_NAME} in {elapsed:.1f}s")
             except Exception as exc:
@@ -224,7 +225,7 @@ class DeduplicationAgent:
                 self.embedder = None
         else:
             self.embedder = None
-            print("[DeduplicationAgent] sentence-transformers not installed — falling back to fuzzy matching")
+            print("[DeduplicationAgent] semantic embeddings disabled or unavailable — falling back to fuzzy matching")
 
     # ------------------------------------------------------------------
     # Embedding

@@ -16,6 +16,12 @@ from config.settings import settings
 from simulation.scenarios import SimulationScenarios
 import db.database as db
 
+try:
+    import multipart  # noqa: F401
+    MULTIPART_AVAILABLE = True
+except ImportError:
+    MULTIPART_AVAILABLE = False
+
 app = FastAPI(title="AEGIS API", version="1.0.0")
 
 # CORS Setup
@@ -615,8 +621,16 @@ async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
         while True:
-            await websocket.receive_text()
+            message = await websocket.receive_text()
+            if message:
+                try:
+                    if "ping" in message:
+                        await websocket.send_json({"type": "pong", "ts": datetime.now().isoformat()})
+                except Exception:
+                    pass
     except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception:
         manager.disconnect(websocket)
 
 
@@ -801,39 +815,45 @@ async def process_callback_response(incident_id: str, request: CallbackResponseR
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-@app.post("/api/v1/emergency/audio", response_model=EmergencyCallResponse)
-async def report_emergency_audio(audio: UploadFile = File(...), caller_id: Optional[str] = Form(None)):
-    audio_bytes = await audio.read()
-    filename = audio.filename or "audio.wav"
-    ext = filename.split(".")[-1].lower() if "." in filename else "wav"
-    
-    # Process audio with whisper in background thread
-    transcription = await asyncio.to_thread(audio_agent.transcribe, audio_bytes, ext)
-    transcript_text = transcription.get("transcript", "")
-    
-    if not transcript_text or transcript_text.startswith("[Transcription Error"):
-        raise HTTPException(status_code=400, detail=f"Failed to transcribe audio: {transcript_text}")
+if MULTIPART_AVAILABLE:
+    @app.post("/api/v1/emergency/audio", response_model=EmergencyCallResponse)
+    async def report_emergency_audio(audio: UploadFile = File(...), caller_id: Optional[str] = Form(None)):
+        audio_bytes = await audio.read()
+        filename = audio.filename or "audio.wav"
+        ext = filename.split(".")[-1].lower() if "." in filename else "wav"
         
-    try:
-        result = await supervisor.process_call(raw_transcript=transcript_text, caller_id=caller_id)
-        # Inject metadata for frontend
-        result["audio_source"] = "voice_upload"
-        result["transcription_confidence"] = transcription.get("confidence")
+        transcription = await asyncio.to_thread(audio_agent.transcribe, audio_bytes, ext)
+        transcript_text = transcription.get("transcript", "")
         
-        eta = min((resource["eta_minutes"] for resource in result["assigned_resources"]), default=None)
-        await publish_result(result)
+        if not transcript_text or transcript_text.startswith("[Transcription Error"):
+            raise HTTPException(status_code=400, detail=f"Failed to transcribe audio: {transcript_text}")
+            
+        try:
+            result = await supervisor.process_call(raw_transcript=transcript_text, caller_id=caller_id)
+            result["audio_source"] = "voice_upload"
+            result["transcription_confidence"] = transcription.get("confidence")
+            
+            eta = min((resource["eta_minutes"] for resource in result["assigned_resources"]), default=None)
+            await publish_result(result)
 
-        return EmergencyCallResponse(
-            incident_id=result["incident_id"],
-            status="processed",
-            priority=result["priority"],
-            assigned_resources=result["assigned_resources"],
-            eta_minutes=eta,
-            dispatch_status=result["dispatch_status"],
-            agent_trail=result["agent_trail"],
+            return EmergencyCallResponse(
+                incident_id=result["incident_id"],
+                status="processed",
+                priority=result["priority"],
+                assigned_resources=result["assigned_resources"],
+                eta_minutes=eta,
+                dispatch_status=result["dispatch_status"],
+                agent_trail=result["agent_trail"],
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+else:
+    @app.post("/api/v1/emergency/audio")
+    async def report_emergency_audio_unavailable():
+        raise HTTPException(
+            status_code=503,
+            detail="Audio upload is unavailable because python-multipart is not installed on the server.",
         )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 @app.post("/api/v1/emergency/report", response_model=EmergencyCallResponse)
 async def report_emergency(request: EmergencyCallRequest):
