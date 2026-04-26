@@ -230,6 +230,8 @@ class DispatchAgent(BaseAgent):
 
         dest_data = {
             "name": selected["hospital"]["name"],
+            "lat": selected["hospital"]["lat"],
+            "lng": selected["hospital"]["lng"],
             "distance_km": selected["distance_km"],
             "available_beds": selected["available"],
             "eta_to_hospital": round((selected["distance_km"] / 40.0) * 60) # 40 km/h avg speed

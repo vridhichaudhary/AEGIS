@@ -4,7 +4,7 @@ import PriorityQueue from '../components/PriorityQueue';
 import AgentFeed from '../components/AgentFeed';
 import SimulatorConsole from '../components/SimulatorConsole';
 import ResourceGrid from '../components/ResourceGrid';
-import HospitalStatusPanel from '../components/HospitalStatusPanel';
+import StationStatusPanel from '../components/HospitalStatusPanel';
 import { Activity, Shield, Users, Zap, Radio, AlertTriangle } from 'lucide-react';
 
 const StatBadge = ({ icon: Icon, label, value, color = '#2C7A7B' }) => (
@@ -110,8 +110,8 @@ const AdminPanel = ({
               <ResourceGrid resources={resources} />
             </div>
             <div className="admin-hospital-section">
-              <div className="admin-section-label">Medical Capacity</div>
-              <HospitalStatusPanel hospitals={hospitals} />
+              <div className="admin-section-label">Medical & Fire Capacity</div>
+              <StationStatusPanel hospitals={hospitals} depots={depots} onFocus={onFocusIncident} />
             </div>
           </div>
         </div>

@@ -122,7 +122,10 @@ function App() {
       {/* Panel Content */}
       <div className="panel-content">
         {activePanel === 'citizen' ? (
-          <CitizenPanel latestCitizenIncident={incidents.find(i => i.status !== 'RESOLVED')} />
+          <CitizenPanel 
+            latestCitizenIncident={incidents.find(i => i.status !== 'RESOLVED')} 
+            allDepots={depots}
+          />
         ) : (
           <AdminPanel
             incidents={incidents}

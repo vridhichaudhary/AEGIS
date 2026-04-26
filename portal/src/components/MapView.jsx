@@ -21,7 +21,7 @@ const MapView = ({ incidents = [], resources = [], depots = [], focusOn = null }
   const mapRef = useRef(null);
   const mapInstance = useRef(null);
   const layersRef = useRef({ street: null, satellite: null });
-  const markersRef = useRef({ incidents: {}, resources: {}, depots: {} });
+  const markersRef = useRef({ incidents: {}, resources: {}, depots: {}, polylines: {} });
   const [isMapReady, setIsMapReady] = useState(false);
   const [mapError, setMapError] = useState(null);
   const [mapLayer, setMapLayer] = useState('street');
@@ -98,20 +98,53 @@ const MapView = ({ incidents = [], resources = [], depots = [], focusOn = null }
     });
   }, [depots, isMapReady]);
 
-  // Sync Incidents
+  // Sync Incidents and Dispatch Lines
   useEffect(() => {
     if (!mapInstance.current || !isMapReady) return;
 
+    // Clear old incident markers and polylines
     Object.values(markersRef.current.incidents).forEach(m => mapInstance.current.removeLayer(m));
+    Object.values(markersRef.current.polylines).forEach(p => mapInstance.current.removeLayer(p));
     markersRef.current.incidents = {};
+    markersRef.current.polylines = {};
 
     const colorMap = { P1: '#E53E3E', P2: '#DD6B20', P3: '#D69E2E', P4: '#38A169', P5: '#3182CE' };
 
     incidents.forEach(inc => {
       if (inc.status === 'RESOLVED' || !inc.location?.latitude) return;
 
+      const incPos = [inc.location.latitude, inc.location.longitude];
       const isCritical = inc.priority === 'P1' || inc.priority === 'P2';
-      const marker = L.circleMarker([inc.location.latitude, inc.location.longitude], {
+      
+      // Draw lines to assigned resources
+      if (inc.assigned_resources) {
+        inc.assigned_resources.forEach((res, idx) => {
+          if (res.depot_lat && res.depot_lng) {
+            const depotPos = [res.depot_lat, res.depot_lng];
+            const poly = L.polyline([depotPos, incPos], {
+              color: colorMap[inc.priority] || '#3182CE',
+              weight: 2,
+              dashArray: '5, 10',
+              opacity: 0.6,
+            }).addTo(mapInstance.current);
+            markersRef.current.polylines[`${inc.incident_id}_res_${idx}`] = poly;
+          }
+        });
+      }
+
+      // Draw line to destination hospital if any
+      if (inc.destination_hospital && inc.destination_hospital.lat && inc.destination_hospital.lng) {
+          const hospPos = [inc.destination_hospital.lat, inc.destination_hospital.lng];
+          const poly = L.polyline([incPos, hospPos], {
+            color: '#2B6CB0',
+            weight: 3,
+            dashArray: '10, 10',
+            opacity: 0.8,
+          }).addTo(mapInstance.current);
+          markersRef.current.polylines[`${inc.incident_id}_hosp`] = poly;
+      }
+
+      const marker = L.circleMarker(incPos, {
         radius: isCritical ? 12 : 8,
         fillColor: colorMap[inc.priority] || '#718096',
         color: '#FFFFFF',
@@ -120,7 +153,6 @@ const MapView = ({ incidents = [], resources = [], depots = [], focusOn = null }
         fillOpacity: 0.9,
       }).addTo(mapInstance.current);
 
-      // Pulse animation for critical
       if (isCritical) {
         marker.getElement()?.classList.add('map-pulse-marker');
       }
@@ -212,11 +244,13 @@ const MapView = ({ incidents = [], resources = [], depots = [], focusOn = null }
           <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#E53E3E]"/> <span className="text-[10px] font-bold">P1 Life-Threat</span></div>
           <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#D69E2E]"/> <span className="text-[10px] font-bold">P3 Moderate</span></div>
           <div className="flex items-center gap-2"><span>🏥</span> <span className="text-[10px] font-bold">Resources</span></div>
+          <div className="flex items-center gap-2"><div className="w-4 h-[1px] bg-[#3182CE] border-t border-dashed"/> <span className="text-[10px] font-bold">Dispatch Vector</span></div>
         </div>
       </div>
     </div>
   );
 };
+
 
 
 export default MapView;
