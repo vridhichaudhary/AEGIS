@@ -100,17 +100,17 @@ const AdminPanel = ({
         </div>
 
         {/* BOTTOM RIGHT — Resources & Hospitals */}
-        <div className="admin-card admin-resource-card">
+        <div className="admin-card admin-resource-card overflow-hidden">
           <div className="admin-card-header">
             <span>🚑 Smart City Resources</span>
           </div>
-          <div className="admin-resource-split">
-            <div className="admin-resource-section">
-              <div className="admin-section-label">Active Fleet</div>
+          <div className="flex flex-col h-full min-h-0 overflow-y-auto custom-scrollbar">
+            <div className="p-4 border-b border-slate-50">
+              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Active Fleet Status</div>
               <ResourceGrid resources={resources} />
             </div>
-            <div className="admin-hospital-section">
-              <div className="admin-section-label">Medical & Fire Capacity</div>
+            <div className="p-4 bg-slate-50/30">
+              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4">Facility Capacity Monitoring</div>
               <StationStatusPanel hospitals={hospitals} depots={depots} onFocus={onFocusIncident} />
             </div>
           </div>

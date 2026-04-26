@@ -421,4 +421,52 @@ body {
 .badge-critical { background: #FED7D7; color: #822727; }
 .badge-info { background: #EBF8FF; color: #2A4365; }
 
-.mono { font-family: 'JetBrains Mono', 'Roboto Mono', monospace; }
+/* ─── Tactical Map Vectors ─────────────────────────────────────────────────── */
+.tactical-vector {
+  filter: drop-shadow(0 0 4px rgba(49, 130, 206, 0.4));
+  stroke-linecap: round;
+  transition: all 0.5s ease-in-out;
+}
+
+/* ─── Horizontal Status Track ──────────────────────────────────────────────── */
+.sos-status-track-horizontal {
+    display: flex;
+    justify-content: space-between;
+    width: 100%;
+    margin-top: 10px;
+}
+
+/* ─── Custom Scrollbar ─────────────────────────────────────────────────────── */
+.custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+    background: #E2E8F0;
+    border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: #CBD5E0;
+}
+
+/* ─── Admin Resource Section ──────────────────────────────────────────────── */
+.admin-resource-split {
+  display: grid;
+  grid-template-columns: 0.8fr 1.2fr;
+  flex: 1;
+  min-height: 0;
+}
+
+.admin-resource-section {
+  border-right: 1px solid #F1F5F9;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-hospital-section {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}

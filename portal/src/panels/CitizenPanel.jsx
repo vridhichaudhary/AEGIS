@@ -35,6 +35,7 @@ const IncidentMiniMap = ({ incident, depots = [] }) => {
   const mapInstance = useRef(null);
   const incidentMarkerRef = useRef(null);
   const depotMarkersRef = useRef([]);
+  const vectorRef = useRef([]);
 
   useEffect(() => {
     if (!mapRef.current) return;
@@ -52,35 +53,65 @@ const IncidentMiniMap = ({ incident, depots = [] }) => {
     if (incident?.location?.latitude) {
       const lat = incident.location.latitude;
       const lng = incident.location.longitude;
+      const incPos = [lat, lng];
 
       if (incidentMarkerRef.current) {
         mapInstance.current.removeLayer(incidentMarkerRef.current);
       }
 
       const color = PRIORITY_COLORS[incident.priority] || '#C53030';
-      const html = `<div style="background:${color};width:18px;height:18px;border-radius:50%;border:3px solid white;box-shadow:0 2px 8px rgba(0,0,0,0.4);animation:pulse-ring 1.5s infinite;"></div>`;
-      const icon = L.divIcon({ className: '', html, iconSize: [18, 18], iconAnchor: [9, 9] });
-      incidentMarkerRef.current = L.marker([lat, lng], { icon }).addTo(mapInstance.current);
-      incidentMarkerRef.current.bindPopup(`<b>${incident.priority} — ${incident.incident_type?.category?.replace('_', ' ') || 'Emergency'}</b><br>${incident.location?.raw_text || ''}`).openPopup();
+      const html = `<div style="background:${color};width:22px;height:22px;border-radius:50%;border:4px solid white;box-shadow:0 4px 12px rgba(0,0,0,0.4);animation:pulse-ring 1.5s infinite;"></div>`;
+      const icon = L.divIcon({ className: '', html, iconSize: [22, 22], iconAnchor: [11, 11] });
+      incidentMarkerRef.current = L.marker(incPos, { icon }).addTo(mapInstance.current);
       
+      // Clear old vectors and markers
+      vectorRef.current.forEach(v => mapInstance.current.removeLayer(v));
+      vectorRef.current = [];
       depotMarkersRef.current.forEach(m => mapInstance.current.removeLayer(m));
       depotMarkersRef.current = [];
 
-      depots.forEach(depot => {
-          const d = haversineDistance(lat, lng, depot.lat, depot.lng);
-          if (d < 10) {
-              const emoji = depot.type === 'fire' ? '🚒' : depot.type === 'police' ? '👮' : '🏥';
-              const dHtml = `<div style="background:white;width:24px;height:24px;border-radius:50%;border:2px solid #3182CE;display:flex;align-items:center;justify-content:center;font-size:12px;box-shadow:0 2px 4px rgba(0,0,0,0.2);">${emoji}</div>`;
-              const dIcon = L.divIcon({ className: '', html: dHtml, iconSize: [24, 24], iconAnchor: [12, 12] });
-              const m = L.marker([depot.lat, depot.lng], { icon: dIcon }).addTo(mapInstance.current);
-              m.bindPopup(`<b>${depot.name}</b><br>${d.toFixed(1)}km away`);
-              depotMarkersRef.current.push(m);
-          }
+      // Find top 3 nearest
+      const nearby = depots.map(d => ({
+          ...d,
+          dist: haversineDistance(lat, lng, d.lat, d.lng)
+      })).sort((a, b) => a.dist - b.dist).slice(0, 3);
+
+      nearby.forEach(depot => {
+          const emoji = depot.type === 'fire' ? '🚒' : depot.type === 'police' ? '👮' : '🏥';
+          const dColor = depot.type === 'fire' ? '#C05621' : depot.type === 'police' ? '#553C9A' : '#2B6CB0';
+          
+          const dHtml = `<div style="background:white;width:30px;height:30px;border-radius:50%;border:2px solid ${dColor};display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 2px 8px rgba(0,0,0,0.2);">${emoji}</div>`;
+          const dIcon = L.divIcon({ className: '', html: dHtml, iconSize: [30, 30], iconAnchor: [15, 15] });
+          const m = L.marker([depot.lat, depot.lng], { icon: dIcon }).addTo(mapInstance.current);
+          depotMarkersRef.current.push(m);
+
+          // Draw vector line with arrowhead
+          const poly = L.polyline([[depot.lat, depot.lng], incPos], {
+              color: dColor,
+              weight: 2,
+              dashArray: '5, 8',
+              opacity: 0.6,
+              className: 'tactical-vector'
+          }).addTo(mapInstance.current);
+          vectorRef.current.push(poly);
+
+          // Add a small arrowhead at the incident end
+          const arrowHtml = `<div style="color:${dColor}; font-size:12px; transform: rotate(${getAngle([depot.lat, depot.lng], incPos)}deg);">➤</div>`;
+          const arrowIcon = L.divIcon({ className: '', html: arrowHtml, iconSize: [12, 12], iconAnchor: [6, 6] });
+          const arrowMarker = L.marker(incPos, { icon: arrowIcon, zIndexOffset: -10 }).addTo(mapInstance.current);
+          vectorRef.current.push(arrowMarker);
       });
 
-      mapInstance.current.flyTo([lat, lng], 14, { animate: true, duration: 1 });
+      mapInstance.current.flyTo(incPos, 14, { animate: true, duration: 1 });
     }
   }, [incident, depots]);
+
+  // Helper to get angle for arrowhead
+  const getAngle = (start, end) => {
+    const dy = end[0] - start[0];
+    const dx = end[1] - start[1];
+    return Math.atan2(dy, dx) * 180 / Math.PI + 90;
+  };
 
   useEffect(() => {
     return () => {
@@ -92,7 +123,7 @@ const IncidentMiniMap = ({ incident, depots = [] }) => {
   }, []);
 
   return (
-    <div style={{ height: '220px', width: '100%', borderRadius: '12px', overflow: 'hidden' }}>
+    <div style={{ height: '280px', width: '100%', borderRadius: '16px', overflow: 'hidden', border: '1px solid #E2E8F0' }}>
       <div ref={mapRef} style={{ height: '100%', width: '100%' }} />
     </div>
   );
@@ -102,47 +133,54 @@ const IncidentMiniMap = ({ incident, depots = [] }) => {
 const StatusTrack = ({ status }) => {
   const currentIdx = STATUS_STEPS.indexOf(status);
   return (
-    <div className="sos-status-track">
+    <div className="sos-status-track-horizontal">
       {STATUS_STEPS.map((step, idx) => {
         const done = idx < currentIdx;
         const active = idx === currentIdx;
         return (
-          <React.Fragment key={step}>
-            <div className={`sos-status-step ${done ? 'done' : active ? 'active' : 'pending'}`}>
-              <div className="sos-status-dot">
-                {done ? '✓' : active ? (
-                  <span className="sos-status-spinner" />
-                ) : idx + 1}
-              </div>
-              <span className="sos-status-label">{step}</span>
+          <div key={step} className="flex-1 flex flex-col items-center relative">
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold transition-all duration-500 z-10
+              ${done ? 'bg-green-500 text-white' : active ? 'bg-blue-600 text-white ring-4 ring-blue-100 scale-110' : 'bg-slate-100 text-slate-400'}`}>
+              {done ? '✓' : idx + 1}
             </div>
+            <span className={`mt-2 text-[10px] font-black uppercase tracking-widest ${active ? 'text-blue-700' : 'text-slate-400'}`}>
+              {step}
+            </span>
             {idx < STATUS_STEPS.length - 1 && (
-              <div className={`sos-status-line ${done ? 'done' : ''}`} />
+              <div className={`absolute left-[50%] right-[-50%] top-4 h-[2px] transition-colors duration-500
+                ${idx < currentIdx ? 'bg-green-500' : 'bg-slate-100'}`} />
             )}
-          </React.Fragment>
+          </div>
         );
       })}
     </div>
   );
 };
 
-// ─── Resource Card ────────────────────────────────────────────────────────────
-const ResourceCard = ({ resource }) => {
-  const typeLabel = (resource.resource_type || resource.type || '').replace('_', ' ');
-  const emoji = typeLabel.includes('ambulance') ? '🚑' : typeLabel.includes('fire') ? '🚒' : '🚓';
-  return (
-    <div className="sos-resource-card animate-slide-up">
-      <div className="sos-resource-emoji">{emoji}</div>
-      <div className="sos-resource-info">
-        <div className="sos-resource-type">{typeLabel.toUpperCase()}</div>
-        <div className="sos-resource-depot">Dispatch from {resource.depot_name || 'Nearest Base'}</div>
-        <div className="sos-resource-eta">
-          Distance: <strong>{resource.distance_km || '?' } km</strong> • ETA: <strong>{resource.eta_minutes || '~5'}m</strong>
+// ─── Response Metrics ─────────────────────────────────────────────────────────
+const ResponseMetrics = ({ closest }) => {
+    if (!closest) return null;
+    const { depot, distance, eta } = closest;
+    const emoji = depot.type === 'fire' ? '🚒' : depot.type === 'police' ? '👮' : '🏥';
+    
+    return (
+        <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 flex items-center gap-4 animate-slide-up mb-6">
+            <div className="w-14 h-14 bg-white rounded-xl shadow-sm flex items-center justify-center text-2xl border border-blue-200">
+                {emoji}
+            </div>
+            <div className="flex-1">
+                <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Closest Responder</div>
+                <div className="text-sm font-bold text-slate-800">{depot.name}</div>
+                <div className="flex items-center gap-3 mt-1 text-xs text-slate-600">
+                    <span className="flex items-center gap-1">📍 <strong>{distance.toFixed(1)} km</strong></span>
+                    <span className="flex items-center gap-1">⏱️ <strong>{eta.toFixed(0)} mins</strong></span>
+                </div>
+            </div>
+            <div className="flex flex-col items-end">
+                <div className="px-3 py-1 bg-blue-600 text-white text-[10px] font-black rounded-full shadow-lg shadow-blue-200">EN ROUTE</div>
+            </div>
         </div>
-      </div>
-      <div className="sos-resource-status dispatched">En Route</div>
-    </div>
-  );
+    );
 };
 
 // ─── Nearby Station Row ───────────────────────────────────────────────────────
@@ -151,15 +189,15 @@ const NearbyStationRow = ({ depot, distance, eta }) => {
   const color = depot.type === 'fire' ? '#C05621' : depot.type === 'police' ? '#553C9A' : '#2B6CB0';
   
   return (
-    <div className="flex items-center gap-4 p-3 border-b border-slate-50 last:border-0">
-      <div className="w-10 h-10 rounded-full flex items-center justify-center text-lg" style={{ backgroundColor: `${color}15`, color }}>
+    <div className="flex items-center gap-4 p-4 border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors">
+      <div className="w-12 h-12 rounded-xl flex items-center justify-center text-xl shadow-sm" style={{ backgroundColor: `${color}10`, color, border: `1px solid ${color}20` }}>
         {emoji}
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-[11px] font-black uppercase tracking-wider opacity-60">{depot.type} STATION</div>
+        <div className="text-[10px] font-black uppercase tracking-wider opacity-60" style={{ color }}>{depot.type} STATION</div>
         <div className="text-sm font-bold text-slate-800 truncate">{depot.name}</div>
-        <div className="text-[11px] text-slate-500">
-          {distance.toFixed(1)} km away • Est. Response: <span className="font-bold text-slate-700">{eta.toFixed(0)} mins</span>
+        <div className="text-[11px] text-slate-500 mt-0.5">
+          {distance.toFixed(1)} km away • Response: <span className="font-bold text-slate-700">{eta.toFixed(0)} mins</span>
         </div>
       </div>
     </div>
@@ -316,31 +354,46 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
           {statusStep ? (
             <div className="sos-response-container animate-fade-in">
               <div className="sos-card card-premium mb-6">
-                <div className="sos-card-header">
-                  <h3 className="sos-card-title">📡 Live Status</h3>
+                <div className="sos-card-header p-4">
+                  <h3 className="sos-card-title flex items-center gap-2">
+                    <span className="relative flex h-3 w-3">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                      <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
+                    </span>
+                    Live Dispatch Status
+                  </h3>
                   {incident?.priority && (
                     <span className="sos-priority-indicator" style={{ backgroundColor: PRIORITY_COLORS[incident.priority] }}>
                       {incident.priority}
                     </span>
                   )}
                 </div>
-                <StatusTrack status={statusStep} />
+                <div className="px-4 pb-6">
+                    <StatusTrack status={statusStep} />
+                </div>
+                {nearbyStations.length > 0 && (
+                    <div className="px-4 pb-4">
+                        <ResponseMetrics closest={nearbyStations[0]} />
+                    </div>
+                )}
               </div>
 
               <div className="sos-card card-premium mb-6 overflow-hidden">
-                <div className="sos-card-header p-4">
-                  <h3 className="sos-card-title">📍 Deployment Site</h3>
-                  <span className="sos-location-badge">{incident?.location?.raw_text || 'Detecting...'}</span>
+                <div className="sos-card-header p-4 bg-slate-50/50 border-b border-slate-100">
+                  <h3 className="sos-card-title">📍 Tactical Deployment Map</h3>
+                  <span className="sos-location-badge bg-white shadow-sm">{incident?.location?.raw_text || 'Detecting Location...'}</span>
                 </div>
-                <IncidentMiniMap incident={incident} depots={allDepots} />
+                <div className="p-2">
+                    <IncidentMiniMap incident={incident} depots={allDepots} />
+                </div>
               </div>
 
               {nearbyStations.length > 0 && (
                 <div className="sos-card card-premium mb-6">
-                   <div className="sos-card-header p-4 border-b border-slate-50">
-                     <h3 className="sos-card-title">📍 Nearby Response Centers</h3>
+                   <div className="sos-card-header p-4 border-b border-slate-100 bg-slate-50/50">
+                     <h3 className="sos-card-title">🚨 Nearby Response Centers</h3>
                    </div>
-                   <div className="p-1">
+                   <div className="p-0">
                      {nearbyStations.map((ns, idx) => (
                        <NearbyStationRow key={idx} {...ns} />
                      ))}
@@ -349,21 +402,26 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
               )}
 
               {incident?.assigned_resources?.length > 0 ? (
-                <div className="sos-card card-premium animate-slide-up">
-                  <h3 className="sos-card-title p-4 border-b border-slate-100">🚨 Responders Dispatched</h3>
+                <div className="sos-card card-premium animate-slide-up border-t-4 border-green-500">
+                  <h3 className="sos-card-title p-4 border-b border-slate-100 bg-green-50/50 text-green-800">✅ Dispatch Confirmed</h3>
                   <div className="sos-resources-list">
                     {incident.assigned_resources.map((r, i) => (
-                      <ResourceCard key={i} resource={r} />
+                      <div key={i} className="flex items-center gap-4 p-4 border-b border-slate-50 last:border-0">
+                        <div className="text-2xl">🚑</div>
+                        <div className="flex-1">
+                             <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{r.resource_type.replace('_', ' ')}</div>
+                             <div className="text-sm font-bold text-slate-800">Unit #{r.resource_id} dispatched from {r.depot_name || 'Central Base'}</div>
+                             <div className="text-[11px] text-green-600 font-bold mt-1">Status: EN ROUTE (ETA: {r.eta_minutes || '~5'} mins)</div>
+                        </div>
+                      </div>
                     ))}
-                  </div>
-                  <div className="sos-dispatch-summary">
-                    Emergency units are coordinating with <strong>{incident?.destination_hospital?.name || 'nearest trauma center'}</strong>. Stay where you are.
                   </div>
                 </div>
               ) : statusStep === 'Dispatched' ? (
-                <div className="sos-card card-premium p-8 text-center">
+                <div className="sos-card card-premium p-10 text-center border-dashed border-2 border-slate-200">
                   <div className="spinner-large mx-auto mb-4" />
-                  <p className="font-bold text-slate-700">Coordinating nearest units...</p>
+                  <p className="font-bold text-slate-600">Coordinating nearest units...</p>
+                  <p className="text-xs text-slate-400 mt-2">AI Agents are securing the closest hospital and rescue fleet.</p>
                 </div>
               ) : null}
             </div>
