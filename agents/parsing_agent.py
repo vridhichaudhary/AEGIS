@@ -41,48 +41,96 @@ class IndianGeocoder:
         "noida": (28.5355, 77.3910),
         "greater noida": (28.4744, 77.5040),
         
-        # Major Landmarks
+        # Major Malls
+        "pacific mall": (28.6683, 77.1276),
+        "pacific mall tagore garden": (28.6683, 77.1276),
+        "pacific mall nsp": (28.6926, 77.1540),
+        "pacific mall subhash nagar": (28.6551, 77.1136),
         "dlf mall": (28.4950, 77.0830),
+        "dlf mall of india": (28.5706, 77.3219),
         "ambience mall": (28.5016, 77.0863),
-        "cyber hub": (28.4945, 77.0894),
+        "select citywalk": (28.5271, 77.2193),
+        "saket mall": (28.5244, 77.2066),
+        "mgf metropolitan": (28.4941, 77.0738),
         "kingdom of dreams": (28.4673, 77.0699),
+        "cyber hub": (28.4945, 77.0894),
+        "cyberhub": (28.4945, 77.0894),
         "galleria market": (28.4684, 77.0294),
-        
-        # Delhi Areas
+        "ansal plaza": (28.5678, 77.2432),
+        "vegas mall": (28.5921, 77.0460),
+        "omaxe connaught place": (28.6507, 77.2152),
+        "grand venice mall": (28.4744, 77.5040),
+        "great india place": (28.5706, 77.3219),
+
+        # Delhi Areas & Markets
         "saket": (28.5244, 77.2066),
         "nehru place": (28.5494, 77.2501),
         "dwarka": (28.5921, 77.0460),
         "rohini": (28.7499, 77.0672),
         "vasant kunj": (28.5177, 77.1559),
         "lajpat nagar": (28.5678, 77.2432),
-        
+        "janakpuri": (28.6219, 77.0840),
+        "pitampura": (28.7005, 77.1308),
+        "shahdara": (28.6736, 77.2882),
+        "tagore garden": (28.6683, 77.1276),
+        "subhash nagar": (28.6551, 77.1136),
+        "rajouri garden": (28.6489, 77.1212),
+        "model town": (28.7161, 77.1923),
+        "punjabi bagh": (28.6705, 77.1294),
+        "paschim vihar": (28.6700, 77.0947),
+        "uttam nagar": (28.6179, 77.0570),
+        "preet vihar": (28.6446, 77.3027),
+        "mayur vihar": (28.6081, 77.2967),
+        "sarita vihar": (28.5358, 77.2926),
+        "malviya nagar": (28.5344, 77.2079),
+        "hauz khas": (28.5494, 77.2043),
+        "green park": (28.5622, 77.2057),
+        "patel nagar": (28.6475, 77.1723),
+        "karol bagh": (28.6519, 77.1909),
+        "chandni chowk": (28.6507, 77.2304),
+        "sadar bazaar": (28.6507, 77.2152),
+        "india gate": (28.6129, 77.2295),
+        "red fort": (28.6562, 77.2410),
+        "qutub minar": (28.5245, 77.1855),
+        "cp": (28.6289, 77.2065),
+
         # Temples & Religious
         "hanuman mandir": (28.6350, 77.2200),
         "iskcon temple": (28.5562, 77.2515),
         "lotus temple": (28.5535, 77.2588),
         "akshardham": (28.6127, 77.2773),
-        
+        "birla mandir": (28.6369, 77.2009),
+        "jama masjid": (28.6507, 77.2334),
+
         # Hospitals
         "aiims": (28.5672, 77.2100),
+        "aiims hospital": (28.5672, 77.2100),
         "fortis hospital": (28.4941, 77.0738),
         "max hospital": (28.5016, 77.0880),
-        
+        "apollo hospital": (28.5562, 77.2825),
+        "safdarjung hospital": (28.5688, 77.2061),
+        "lnjp hospital": (28.6415, 77.2319),
+        "gtb hospital": (28.6876, 77.3048),
+        "rml hospital": (28.6358, 77.1997),
+
         # Highways
         "nh 48": (28.4500, 77.0500),
         "nh-48": (28.4500, 77.0500),
         "nh48": (28.4500, 77.0500),
         "nh 8": (28.4500, 77.0500),
         "national highway 48": (28.4500, 77.0500),
-        
+        "nh 24": (28.6446, 77.3027),
+        "nh 58": (28.7005, 77.1308),
+
         # Metro Stations
         "metro station": (28.6139, 77.2090),
         "huda city centre": (28.4595, 77.0727),
         "iffco chowk": (28.4728, 77.0334),
-        
-        # Markets
-        "sadar bazaar": (28.6507, 77.2152),
-        "chandni chowk": (28.6507, 77.2304),
-        "karol bagh": (28.6519, 77.1909),
+        "rajiv chowk": (28.6289, 77.2065),
+        "kashmere gate": (28.6664, 77.2278),
+        "new delhi station": (28.6438, 77.2188),
+        "hazrat nizamuddin": (28.5898, 77.2507),
+        "old delhi station": (28.6581, 77.2279),
     }
     
     @classmethod
@@ -169,6 +217,8 @@ class ParsingAgent(BaseAgent):
         "trapped", "phas", "faase", "flood", "blast", "cylinder",
         "explosion", "burn", "jal gaye", "labor pain", "water broke",
         "danga", "chaku", "gun",
+        # Hindi injury/victim terms
+        "ghayal", "zakhmi", "injured", "ghaayal",
     }
     
     CATEGORY_PATTERNS = {
@@ -195,28 +245,62 @@ class ParsingAgent(BaseAgent):
         ],
     }
     
-    LOCATION_PATTERNS = [
-        r"\b(sector\s+\d+[a-z]?(?:\s+[a-z]+)?)\b",
-        r"\b(nh\s*\d+)\b",
-        r"\b(national highway\s*\d+)\b",
-        r"\b([a-z0-9\s]+ (?:mall|mandir|hospital|hub|market|chowk|station|place|road|street|nagar|kunj|vihar))\b",
+    # Hindi/Hinglish postpositions that appear right AFTER a location name
+    HINDI_POSTPOSITIONS = [
+        r"\s+(?:mai|mein|me|pe|par|ke|ka|ki|ko|se|wala|wali|waale|tak|se|paar)\b",
     ]
-    
+
+    LOCATION_PATTERNS = [
+        r"\b(sector\s+\d+[a-z]?(?:\s+(?:gurugram|gurgaon|noida|delhi))?)\b",
+        r"\b(nh[-\s]*\d+)\b",
+        r"\b(national highway\s*\d+)\b",
+        # landmark suffix pattern — require non-space word before suffix
+        r"\b([a-z]+(?:\s+[a-z]+)*\s+(?:mall|mandir|temple|hospital|hub|market|chowk|station|place|road|street|nagar|kunj|vihar|bagh|enclave|colony|block|marg|flyover|underpass|bridge))\b",
+    ]
+
+    # LANDMARK_TOKENS used for tagging landmark vs plain location
+    LANDMARK_TOKENS = {"mall", "mandir", "temple", "hospital", "hub", "market",
+                       "chowk", "station", "place", "flyover", "underpass", "bridge"}
+
     def __init__(self):
         super().__init__(temperature=0)
         self.parser = JsonOutputParser(pydantic_object=ParsingResult)
-    
+
+    def _strip_hindi_postpositions(self, text: str) -> str:
+        """Remove trailing Hindi postpositions so they don't bleed into location names."""
+        for pat in self.HINDI_POSTPOSITIONS:
+            text = re.sub(pat + r".*", "", text, flags=re.IGNORECASE).strip()
+        return text
+
     def extract_location(self, text: str) -> Tuple[str, str]:
-        """Extract location and landmark"""
-        lowered = text.lower()
-        
+        """Extract location and landmark.
+
+        Strategy:
+        1. Scan for any known geocoder key (longest match first) directly in text.
+        2. Fall back to regex patterns on a Hindi-postposition-stripped version.
+        """
+        lowered = text.lower().strip()
+
+        # --- Step 1: Direct geocoder dictionary lookup (most reliable) ---
+        for loc_key in sorted(IndianGeocoder.LOCATIONS.keys(), key=len, reverse=True):
+            if loc_key in lowered:
+                is_landmark = any(t in loc_key for t in self.LANDMARK_TOKENS)
+                return loc_key.title(), loc_key.title() if is_landmark else ""
+
+        # --- Step 2: Strip Hindi postpositions, then try regex ---
+        cleaned = self._strip_hindi_postpositions(lowered)
+        # Also strip common Hinglish location prefixes
+        for prefix in ["near ", "ke paas ", "at ", "in ", "mein ", "mai ", "par ", "pe "]:
+            if cleaned.startswith(prefix):
+                cleaned = cleaned[len(prefix):]
+
         for pattern in self.LOCATION_PATTERNS:
-            match = re.search(pattern, lowered, flags=re.IGNORECASE)
+            match = re.search(pattern, cleaned, flags=re.IGNORECASE)
             if match:
                 location = re.sub(r"\s+", " ", match.group(1)).strip()
-                landmark = location if any(token in location.lower() for token in ["mall", "mandir", "hospital", "hub", "market", "chowk", "station", "place"]) else ""
-                return location.title(), landmark.title()
-        
+                is_landmark = any(t in location.lower() for t in self.LANDMARK_TOKENS)
+                return location.title(), location.title() if is_landmark else ""
+
         return "", ""
     
     def classify_incident(self, text: str) -> Tuple[str, str]:
