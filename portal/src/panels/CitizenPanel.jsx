@@ -17,6 +17,28 @@ const STATUS_STEPS = ['Received', 'Parsing', 'Triaged', 'Dispatched'];
 
 const generateCallerId = () => `+91-112-${Math.floor(10000000 + Math.random() * 90000000)}`;
 
+const deriveStatusStep = (incident) => {
+  if (!incident) return null;
+
+  const dispatchStatus = incident.dispatch_status;
+  if (dispatchStatus === 'assigned' || incident.incident_status === 'DISPATCHED') {
+    return 'Dispatched';
+  }
+
+  if (
+    dispatchStatus === 'awaiting_location' ||
+    dispatchStatus === 'pending_callback' ||
+    dispatchStatus === 'review_required' ||
+    dispatchStatus === 'resource_unavailable' ||
+    dispatchStatus === 'not_required' ||
+    incident.priority
+  ) {
+    return 'Triaged';
+  }
+
+  return 'Parsing';
+};
+
 // ─── Haversine Distance ────────────────────────────────────────────────────────
 const haversineDistance = (lat1, lon1, lat2, lon2) => {
   const R = 6371;
@@ -228,7 +250,7 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
   useEffect(() => {
     if (latestCitizenIncident) {
       setIncident(latestCitizenIncident);
-      setStatusStep('Dispatched');
+      setStatusStep(deriveStatusStep(latestCitizenIncident));
     }
   }, [latestCitizenIncident]);
 
@@ -283,8 +305,7 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
     setIncident(null);
 
     try {
-      setTimeout(() => setStatusStep('Parsing'), 600);
-      setTimeout(() => setStatusStep('Triaged'), 1500);
+      setStatusStep('Parsing');
 
       const res = await fetch(`${API_BASE}/api/v1/emergency/report`, {
         method: 'POST',
@@ -293,6 +314,9 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
       });
 
       if (!res.ok) throw new Error('Backend error');
+      const data = await res.json();
+      setIncident(data);
+      setStatusStep(deriveStatusStep(data));
       setText('');
     } catch (e) {
       console.error('SOS submit failed:', e);

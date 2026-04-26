@@ -411,6 +411,13 @@ class EmergencyCallResponse(BaseModel):
     assigned_resources: List[dict]
     eta_minutes: Optional[float]
     dispatch_status: str
+    incident_status: Optional[str] = None
+    location: Optional[dict] = None
+    incident_type: Optional[dict] = None
+    requires_callback: Optional[bool] = None
+    missing_fields: Optional[List[str]] = None
+    suggested_callback_script: Optional[str] = None
+    channel: Optional[str] = None
     agent_trail: List[dict]
     golden_hour_deadline: Optional[str] = None
     golden_hour_at_risk: Optional[bool] = None
@@ -810,7 +817,19 @@ async def process_callback_response(incident_id: str, request: CallbackResponseR
             assigned_resources=result["assigned_resources"],
             eta_minutes=eta,
             dispatch_status=result["dispatch_status"],
+            incident_status=result.get("incident_status"),
+            location=result.get("location"),
+            incident_type=result.get("incident_type"),
+            requires_callback=result.get("requires_callback"),
+            missing_fields=result.get("missing_fields", []),
+            suggested_callback_script=result.get("suggested_callback_script"),
+            channel=result.get("channel", "voice_call"),
             agent_trail=result["agent_trail"],
+            golden_hour_deadline=result.get("golden_hour_deadline").isoformat() if result.get("golden_hour_deadline") else None,
+            golden_hour_at_risk=result.get("golden_hour_at_risk"),
+            authenticity_score=int(result.get("confidence_score", 1.0) * 100),
+            joint_dispatch_memo=result.get("joint_dispatch_memo"),
+            agency_timings=result.get("agency_timings"),
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -872,7 +891,19 @@ async def report_emergency(request: EmergencyCallRequest):
             assigned_resources=result["assigned_resources"],
             eta_minutes=eta,
             dispatch_status=result["dispatch_status"],
+            incident_status=result.get("incident_status"),
+            location=result.get("location"),
+            incident_type=result.get("incident_type"),
+            requires_callback=result.get("requires_callback"),
+            missing_fields=result.get("missing_fields", []),
+            suggested_callback_script=result.get("suggested_callback_script"),
+            channel=result.get("channel", "voice_call"),
             agent_trail=result["agent_trail"],
+            golden_hour_deadline=result.get("golden_hour_deadline").isoformat() if result.get("golden_hour_deadline") else None,
+            golden_hour_at_risk=result.get("golden_hour_at_risk"),
+            authenticity_score=int(result.get("confidence_score", 1.0) * 100),
+            joint_dispatch_memo=result.get("joint_dispatch_memo"),
+            agency_timings=result.get("agency_timings"),
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
