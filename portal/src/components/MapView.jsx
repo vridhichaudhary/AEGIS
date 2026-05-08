@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { Layers, Map as MapIcon, Target, Navigation, ZoomIn, ZoomOut, AlertTriangle } from 'lucide-react';
+import { Layers, ZoomIn, ZoomOut } from 'lucide-react';
 
 // Fix Leaflet default icon issues for production builds
 delete L.Icon.Default.prototype._getIconUrl;
@@ -11,11 +11,47 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-const DEPOTS = [
-  { id: 'ambulance', lat: 28.6328, lng: 77.2197, name: 'AIIMS Emergency Base', icon: '🏥' },
-  { id: 'fire', lat: 28.6562, lng: 77.2410, name: 'Delhi Fire Station North', icon: '🚒' },
-  { id: 'police', lat: 28.6139, lng: 77.2090, name: 'Delhi Police HQ', icon: '👮' },
-];
+const haversineDistance = (lat1, lon1, lat2, lon2) => {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * Math.PI / 180;
+  const dLon = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+};
+
+const getPreferredDepotTypes = (category = 'other') => {
+  const typePreference = {
+    accident: ['ambulance', 'police', 'fire'],
+    medical: ['ambulance', 'hospital', 'police'],
+    fire: ['fire', 'ambulance', 'police'],
+    violence: ['police', 'ambulance', 'fire'],
+    natural_disaster: ['rescue', 'fire', 'ambulance'],
+  };
+
+  return typePreference[category] || ['ambulance', 'police', 'fire'];
+};
+
+const getNearestRelevantDepots = (incident, depots = [], limit = 2) => {
+  if (!incident?.location?.latitude || !incident?.location?.longitude) return [];
+
+  const preferred = getPreferredDepotTypes(incident?.incident_type?.category);
+  return depots
+    .map((depot) => ({
+      depot,
+      distance: haversineDistance(
+        incident.location.latitude,
+        incident.location.longitude,
+        depot.lat,
+        depot.lng
+      ),
+      order: preferred.indexOf(depot.type) >= 0 ? preferred.indexOf(depot.type) : 99,
+    }))
+    .sort((a, b) => a.order !== b.order ? a.order - b.order : a.distance - b.distance)
+    .slice(0, limit);
+};
 
 const MapView = ({ incidents = [], resources = [], depots = [], focusOn = null }) => {
   const mapRef = useRef(null);
@@ -108,7 +144,7 @@ const MapView = ({ incidents = [], resources = [], depots = [], focusOn = null }
     markersRef.current.incidents = {};
     markersRef.current.polylines = {};
 
-    const colorMap = { P1: '#E53E3E', P2: '#DD6B20', P3: '#D69E2E', P4: '#38A169', P5: '#3182CE' };
+    const colorMap = { P1: '#c96f5d', P2: '#d38b5d', P3: '#b88a4a', P4: '#2f8a72', P5: '#4f88c4' };
 
     incidents.forEach(inc => {
       if (inc.status === 'RESOLVED' || !inc.location?.latitude) return;
@@ -116,6 +152,8 @@ const MapView = ({ incidents = [], resources = [], depots = [], focusOn = null }
       const incPos = [inc.location.latitude, inc.location.longitude];
       const isCritical = inc.priority === 'P1' || inc.priority === 'P2';
       
+      let hasAssignedDispatchLine = false;
+
       // Draw lines to assigned resources
       if (inc.assigned_resources) {
         inc.assigned_resources.forEach((res, idx) => {
@@ -123,12 +161,28 @@ const MapView = ({ incidents = [], resources = [], depots = [], focusOn = null }
             const depotPos = [res.depot_lat, res.depot_lng];
             const poly = L.polyline([depotPos, incPos], {
               color: colorMap[inc.priority] || '#3182CE',
-              weight: 2,
-              dashArray: '5, 10',
-              opacity: 0.6,
+              weight: 2.5,
+              dashArray: '6, 10',
+              opacity: 0.72,
             }).addTo(mapInstance.current);
             markersRef.current.polylines[`${inc.incident_id}_res_${idx}`] = poly;
+            hasAssignedDispatchLine = true;
           }
+        });
+      }
+
+      // If a dispatch route has not been assigned yet, show nearest recommended corridor.
+      if (!hasAssignedDispatchLine) {
+        const nearestDepots = getNearestRelevantDepots(inc, depots, 2);
+        nearestDepots.forEach(({ depot }, idx) => {
+          const corridor = L.polyline([[depot.lat, depot.lng], incPos], {
+            color: idx === 0 ? '#3b6ea8' : '#8aa9cc',
+            weight: idx === 0 ? 2.25 : 1.75,
+            dashArray: idx === 0 ? '5, 8' : '3, 8',
+            opacity: idx === 0 ? 0.55 : 0.35,
+            className: 'map-response-corridor',
+          }).addTo(mapInstance.current);
+          markersRef.current.polylines[`${inc.incident_id}_corridor_${depot.id}_${idx}`] = corridor;
         });
       }
 
@@ -136,10 +190,10 @@ const MapView = ({ incidents = [], resources = [], depots = [], focusOn = null }
       if (inc.destination_hospital && inc.destination_hospital.lat && inc.destination_hospital.lng) {
           const hospPos = [inc.destination_hospital.lat, inc.destination_hospital.lng];
           const poly = L.polyline([incPos, hospPos], {
-            color: '#2B6CB0',
+            color: '#3b6ea8',
             weight: 3,
             dashArray: '10, 10',
-            opacity: 0.8,
+            opacity: 0.65,
           }).addTo(mapInstance.current);
           markersRef.current.polylines[`${inc.incident_id}_hosp`] = poly;
       }
@@ -167,7 +221,7 @@ const MapView = ({ incidents = [], resources = [], depots = [], focusOn = null }
       `);
       markersRef.current.incidents[inc.incident_id] = marker;
     });
-  }, [incidents, isMapReady]);
+  }, [incidents, depots, isMapReady]);
 
   // Sync Resources (Active movement)
   useEffect(() => {
@@ -244,7 +298,7 @@ const MapView = ({ incidents = [], resources = [], depots = [], focusOn = null }
           <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#E53E3E]"/> <span className="text-[10px] font-bold">P1 Life-Threat</span></div>
           <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-[#D69E2E]"/> <span className="text-[10px] font-bold">P3 Moderate</span></div>
           <div className="flex items-center gap-2"><span>🏥</span> <span className="text-[10px] font-bold">Resources</span></div>
-          <div className="flex items-center gap-2"><div className="w-4 h-[1px] bg-[#3182CE] border-t border-dashed"/> <span className="text-[10px] font-bold">Dispatch Vector</span></div>
+          <div className="flex items-center gap-2"><div className="w-4 h-[1px] bg-[#3b6ea8] border-t border-dashed"/> <span className="text-[10px] font-bold">Dispatch / nearest corridor</span></div>
         </div>
       </div>
     </div>

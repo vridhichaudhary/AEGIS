@@ -35,15 +35,15 @@ const AdminPanel = ({
 
   return (
     <div className="admin-panel animate-fade-in">
-      {/* Top Bar */}
       <div className={`admin-topbar ${mciActive ? 'mci-active' : ''}`}>
         <div className="admin-topbar-brand">
           <div className="admin-brand-icon">
             <Shield size={20} className="text-white" />
           </div>
           <div>
+            <div className="admin-brand-kicker">Unified emergency command</div>
             <div className="admin-brand-name">AEGIS <span>Command</span></div>
-            <div className="admin-brand-sub">Smart City Emergency Dispatch • Delhi NCR</div>
+            <div className="admin-brand-sub">Smart city dispatch orchestration for Delhi NCR control rooms</div>
           </div>
           {mciActive && (
             <div className="mci-alert-badge animate-pulse">
@@ -53,9 +53,9 @@ const AdminPanel = ({
         </div>
 
         <div className="admin-stats-row">
-          <StatBadge icon={Activity} label="Active Sites" value={activeIncidents.length} color="#E53E3E" />
-          <StatBadge icon={Radio} label="Duplicates" value={totalMerged} color="#D69E2E" />
-          <StatBadge icon={Users} label="Available" value={`${availableResources}/${resources.length}`} color="#38A169" />
+          <StatBadge icon={Activity} label="Active Sites" value={activeIncidents.length} color="#D16A5A" />
+          <StatBadge icon={Radio} label="Duplicates" value={totalMerged} color="#B38A4A" />
+          <StatBadge icon={Users} label="Available" value={`${availableResources}/${resources.length}`} color="#2D8A72" />
           <StatBadge icon={Zap} label="System" value={
             <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <span className="status-dot status-dot-online" />Live
@@ -64,12 +64,26 @@ const AdminPanel = ({
         </div>
       </div>
 
-      {/* Main Grid */}
+      <div className="admin-overview-strip">
+        <div className="admin-overview-card">
+          <div className="admin-overview-label">Operational posture</div>
+          <div className="admin-overview-value">{mciActive ? 'Mass-casualty protocol engaged' : 'Steady-state monitoring'}</div>
+          <div className="admin-overview-text">Incident intake, AI triage, dispatch assignment, and resource telemetry are synchronized in one live operator surface.</div>
+        </div>
+        <div className="admin-overview-card">
+          <div className="admin-overview-label">Queue health</div>
+          <div className="admin-overview-value">{activeIncidents.length === 0 ? 'No active threats' : `${activeIncidents.length} active incidents under watch`}</div>
+          <div className="admin-overview-text">Duplicates are merged before dispatch, while unresolved priorities stay visible for intervention and field coordination.</div>
+        </div>
+      </div>
+
       <div className="admin-grid">
-        {/* TOP LEFT — Tactical Map */}
         <div className="admin-card admin-map-card overflow-hidden">
           <div className="admin-card-header">
-            <span>🗺️ Tactical Response Map</span>
+            <div>
+              <div className="admin-card-kicker">Geospatial overview</div>
+              <span>Tactical response map</span>
+            </div>
             <span className="admin-card-count">{activeIncidents.length} incidents</span>
           </div>
           <div className="admin-map-container h-full">
@@ -77,7 +91,6 @@ const AdminPanel = ({
           </div>
         </div>
 
-        {/* TOP RIGHT — Priority Queue */}
         <div className="admin-card admin-queue-card">
           <PriorityQueue
             incidents={incidents}
@@ -86,10 +99,12 @@ const AdminPanel = ({
           />
         </div>
 
-        {/* BOTTOM LEFT — Agent Decision Feed */}
         <div className="admin-card admin-agent-card">
           <div className="admin-card-header">
-            <span>🤖 AI Agent Decision Feed</span>
+            <div>
+              <div className="admin-card-kicker">Reasoning trace</div>
+              <span>AI agent decision feed</span>
+            </div>
             {agentEvents.length > 0 && (
               <span className="admin-card-count">{agentEvents.length} events</span>
             )}
@@ -99,10 +114,12 @@ const AdminPanel = ({
           </div>
         </div>
 
-        {/* BOTTOM RIGHT — Resources & Hospitals */}
         <div className="admin-card admin-resource-card overflow-hidden">
           <div className="admin-card-header">
-            <span>🚑 Smart City Resources</span>
+            <div>
+              <div className="admin-card-kicker">Field capacity</div>
+              <span>Smart city resources</span>
+            </div>
           </div>
           <div className="flex flex-col h-full min-h-0 overflow-y-auto custom-scrollbar">
             <div className="p-4 border-b border-slate-50">

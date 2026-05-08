@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { getApiBase } from '../utils/runtimeConfig';
+import { Languages, MapPinned, ShieldCheck, Siren, TimerReset } from 'lucide-react';
 
 // Fix Leaflet default icon
 delete L.Icon.Default.prototype._getIconUrl;
@@ -330,25 +331,49 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
   return (
     <div className="citizen-panel animate-fade-in">
       <div className="citizen-header">
-        <div className="citizen-logo-container">
-          <div className="citizen-logo-pulse"></div>
-          <div className="citizen-logo">🆘</div>
-        </div>
-        <div>
-          <h1 className="citizen-title">Citizen SOS Portal</h1>
-          <p className="citizen-subtitle">Delhi NCR Smart City Response Network</p>
+        <div className="citizen-header-main">
+          <div className="citizen-logo-container">
+            <div className="citizen-logo-pulse"></div>
+            <div className="citizen-logo">🆘</div>
+          </div>
+          <div>
+            <div className="citizen-eyebrow">Emergency Intake Interface</div>
+            <h1 className="citizen-title">Citizen SOS Portal</h1>
+            <p className="citizen-subtitle">Designed for rapid, multilingual reporting with live dispatch visibility and secure escalation.</p>
+          </div>
         </div>
         <div className="citizen-caller-info">
-          <div className="citizen-caller-label">Your Secure ID</div>
+          <div className="citizen-caller-label">Secure Session ID</div>
           <div className="citizen-caller-id">{callerId}</div>
+        </div>
+      </div>
+
+      <div className="citizen-trust-row">
+        <div className="citizen-trust-chip">
+          <Languages size={14} />
+          Hindi, Hinglish, English
+        </div>
+        <div className="citizen-trust-chip">
+          <MapPinned size={14} />
+          Assisted location capture
+        </div>
+        <div className="citizen-trust-chip">
+          <ShieldCheck size={14} />
+          Protected emergency channel
         </div>
       </div>
 
       <div className="citizen-body">
         <div className="citizen-input-section">
           <div className="sos-input-container card-premium">
-            <h2 className="sos-input-heading">Report Emergency</h2>
-            <p className="sos-input-sub">Speak clearly or type the situation. Help will be dispatched instantly.</p>
+            <div className="sos-input-intro">
+              <div>
+                <div className="sos-input-kicker">Immediate reporting</div>
+                <h2 className="sos-input-heading">Report an emergency in one step</h2>
+              </div>
+              <div className="sos-mode-pill">Live triage</div>
+            </div>
+            <p className="sos-input-sub">Describe what is happening, where you are, and who is affected. The same backend flow continues to parse, validate, triage, and dispatch without changing your current system logic.</p>
             
             <button
               className={`sos-voice-btn-large ${listening ? 'listening' : ''}`}
@@ -401,13 +426,10 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
             <div className="sos-response-container animate-fade-in">
               <div className="sos-card card-premium mb-6">
                 <div className="sos-card-header p-4">
-                  <h3 className="sos-card-title flex items-center gap-2">
-                    <span className="relative flex h-3 w-3">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                      <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
-                    </span>
-                    Live Dispatch Status
-                  </h3>
+                  <div>
+                    <div className="sos-card-kicker">Response progress</div>
+                    <h3 className="sos-card-title flex items-center gap-2">Live dispatch status</h3>
+                  </div>
                   {incident?.priority && (
                     <span className="sos-priority-indicator" style={{ backgroundColor: PRIORITY_COLORS[incident.priority] }}>
                       {incident.priority}
@@ -426,7 +448,10 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
 
               <div className="sos-card card-premium mb-6 overflow-hidden">
                 <div className="sos-card-header p-4 bg-slate-50/50 border-b border-slate-100">
-                  <h3 className="sos-card-title">📍 Tactical Deployment Map</h3>
+                  <div>
+                    <div className="sos-card-kicker">Field visibility</div>
+                    <h3 className="sos-card-title">Tactical deployment map</h3>
+                  </div>
                   <span className="sos-location-badge bg-white shadow-sm">{incident?.location?.raw_text || 'Detecting Location...'}</span>
                 </div>
                 <div className="p-2">
@@ -437,7 +462,10 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
               {nearbyStations.length > 0 && (
                 <div className="sos-card card-premium mb-6">
                    <div className="sos-card-header p-4 border-b border-slate-100 bg-slate-50/50">
-                     <h3 className="sos-card-title">🚨 Nearby Response Centers</h3>
+                     <div>
+                       <div className="sos-card-kicker">Nearest support</div>
+                       <h3 className="sos-card-title">Nearby response centers</h3>
+                     </div>
                    </div>
                    <div className="p-0">
                      {nearbyStations.map((ns, idx) => (
@@ -449,7 +477,13 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
 
               {incident?.assigned_resources?.length > 0 ? (
                 <div className="sos-card card-premium animate-slide-up border-t-4 border-green-500">
-                  <h3 className="sos-card-title p-4 border-b border-slate-100 bg-green-50/50 text-green-800">✅ Dispatch Confirmed</h3>
+                  <div className="dispatch-confirmed-header">
+                    <div>
+                      <div className="sos-card-kicker">Unit mobilization</div>
+                      <h3 className="sos-card-title text-green-900">Dispatch confirmed</h3>
+                    </div>
+                    <span className="dispatch-confirmed-chip">Units en route</span>
+                  </div>
                   <div className="sos-resources-list">
                     {incident.assigned_resources.map((r, i) => (
                       <div key={i} className="flex items-center gap-4 p-4 border-b border-slate-50 last:border-0">
@@ -473,14 +507,34 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
             </div>
           ) : (
             <div className="citizen-idle-state animate-fade-in">
-              <div className="citizen-idle-visual">
-                <div className="idle-ring ring-1"></div>
-                <div className="idle-ring ring-2"></div>
-                <div className="idle-ring ring-3"></div>
-                <div className="idle-icon">🛡️</div>
+              <div className="citizen-idle-card">
+                <div className="citizen-idle-visual">
+                  <div className="idle-ring ring-1"></div>
+                  <div className="idle-ring ring-2"></div>
+                  <div className="idle-ring ring-3"></div>
+                  <div className="idle-icon">🛡️</div>
+                </div>
+                <div className="citizen-idle-copy">
+                  <div className="idle-kicker">Standby network</div>
+                  <h2 className="idle-title">Delhi NCR Response Network</h2>
+                  <p className="idle-desc">AEGIS AI agents stay ready for voice or typed emergency intake, duplicate detection, severity understanding, and safer dispatch coordination across the region.</p>
+                </div>
+
+                <div className="idle-feature-list">
+                  <div className="idle-feature-item">
+                    <Languages size={16} />
+                    <span>Understands Hindi, Hinglish, and English distress descriptions</span>
+                  </div>
+                  <div className="idle-feature-item">
+                    <Siren size={16} />
+                    <span>Escalates life-critical incidents with transparent triage stages</span>
+                  </div>
+                  <div className="idle-feature-item">
+                    <TimerReset size={16} />
+                    <span>Guides the caller while operators and nearest units are mobilized</span>
+                  </div>
+                </div>
               </div>
-              <h2 className="idle-title">Delhi NCR Response Network</h2>
-              <p className="idle-desc">AEGIS AI agents are on standby 24/7 to provide instant emergency assistance across the National Capital Region.</p>
               
               <div className="idle-stats">
                 <div className="idle-stat">

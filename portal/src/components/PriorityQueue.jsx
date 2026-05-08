@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { AlertCircle, Search, Filter } from 'lucide-react';
+import { AlertCircle, Search } from 'lucide-react';
 import IncidentCard from './IncidentCard';
 
 const PriorityQueue = ({ incidents, onResolve, onFocus, onAddNote, mViewTimeline, isMci }) => {
@@ -58,48 +58,49 @@ const PriorityQueue = ({ incidents, onResolve, onFocus, onAddNote, mViewTimeline
   ];
 
   return (
-    <div className="flex flex-col h-full bg-aegis-bg-surface overflow-hidden">
-      <div className="section-header flex justify-between items-center bg-aegis-bg-elevated/80 backdrop-blur-md sticky top-0 z-10">
+    <div className="priority-queue-shell">
+      <div className="priority-queue-header">
         <div className="flex items-center gap-2">
           <AlertCircle size={14} className="text-aegis-critical" />
-          <span>Priority Operations Queue</span>
+          <div>
+            <div className="admin-card-kicker">Live incident stream</div>
+            <span className="priority-queue-title">Priority operations queue</span>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="relative">
+        <div className="priority-queue-tools">
+          <div className="priority-queue-search">
             <Search size={10} className="absolute left-2 top-1/2 -translate-y-1/2 text-aegis-text-muted" />
             <input 
               type="text" 
               placeholder="SEARCH..." 
-              className="bg-aegis-bg-base border border-aegis-border rounded px-6 py-0.5 text-[9px] mono text-aegis-text-primary outline-none focus:border-aegis-info w-24"
+              className="priority-queue-search-input"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
             />
           </div>
-          <span className="mono text-[10px] text-aegis-text-muted bg-aegis-bg-base px-1.5 py-0.5 rounded border border-aegis-border">
+          <span className="priority-queue-count mono">
             {sortedIncidents.length}
           </span>
         </div>
       </div>
       
-      {/* Agency Tabs */}
-      <div className="flex px-2 py-1.5 gap-1 border-b border-aegis-border bg-aegis-bg-elevated/30">
+      <div className="priority-queue-tabs">
         {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-3 py-1 text-[9px] font-black uppercase tracking-widest rounded transition-all
-              ${activeTab === tab.id ? 'bg-aegis-info text-white shadow-lg shadow-aegis-info/20' : 'text-aegis-text-muted hover:text-aegis-text-secondary'}`}
+            className={`priority-queue-tab ${activeTab === tab.id ? 'active' : ''}`}
           >
             {tab.label}
           </button>
         ))}
       </div>
       
-      <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
+      <div ref={scrollRef} className="priority-queue-body custom-scrollbar">
         {sortedIncidents.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-aegis-text-muted text-[10px] uppercase tracking-widest opacity-30 italic py-12">
-            <p>System Normal</p>
-            <p className="text-[8px] mt-1">NO ACTIVE THREATS</p>
+          <div className="priority-queue-empty">
+            <p className="priority-queue-empty-title">System normal</p>
+            <p className="priority-queue-empty-sub">No active threats in the live queue</p>
           </div>
         ) : (
           sortedIncidents.map((incident) => (

@@ -1,9 +1,10 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState } from 'react';
 import CitizenPanel from './panels/CitizenPanel';
 import AdminPanel from './panels/AdminPanel';
 import AARModal from './components/AARModal';
 import { connectWebSocket } from './utils/websocket';
 import { getApiBase } from './utils/runtimeConfig';
+import { Activity, ShieldCheck, RadioTower } from 'lucide-react';
 
 const API_BASE = getApiBase();
 
@@ -84,64 +85,96 @@ function App() {
     }
   };
 
+  const activeIncidentCount = incidents.filter(i => i.status !== 'RESOLVED').length;
+  const systemLabel = wsStatus === 'connected' ? 'Live' : wsStatus === 'reconnecting' ? 'Recovering' : 'Connecting';
+
   return (
     <div className="app-root">
-      {/* Panel Toggle Navigation */}
-      <div className="panel-nav">
-        <button
-          className={`panel-tab ${activePanel === 'citizen' ? 'active' : ''}`}
-          onClick={() => setActivePanel('citizen')}
-        >
-          <span className="panel-tab-icon">🆘</span>
-          <span className="panel-tab-label">SOS Portal</span>
-          <span className="panel-tab-sub">Citizen View</span>
-        </button>
+      <div className="app-shell">
+        <header className="app-topbar">
+          <div className="app-brand">
+            <div className="app-brand-mark">
+              <ShieldCheck size={18} />
+            </div>
+            <div>
+              <div className="app-brand-title">AEGIS Response Grid</div>
+              <div className="app-brand-subtitle">AI-assisted emergency coordination for multilingual, high-volume public safety operations</div>
+            </div>
+          </div>
 
-        <div className="panel-nav-divider" />
+          <div className="app-view-switch">
+            <button
+              className={`app-view-pill ${activePanel === 'citizen' ? 'active' : ''}`}
+              onClick={() => setActivePanel('citizen')}
+            >
+              <span className="app-view-icon">🆘</span>
+              <span>
+                <span className="app-view-title">SOS Portal</span>
+                <span className="app-view-subtitle">Citizen Interface</span>
+              </span>
+            </button>
 
-        <button
-          className={`panel-tab ${activePanel === 'admin' ? 'active' : ''}`}
-          onClick={() => setActivePanel('admin')}
-        >
-          <span className="panel-tab-icon">📡</span>
-          <span className="panel-tab-label">Control Room</span>
-          <span className="panel-tab-sub">Admin Dashboard</span>
-          {incidents.filter(i => i.status !== 'RESOLVED').length > 0 && (
-            <span className="panel-tab-badge">
-              {incidents.filter(i => i.status !== 'RESOLVED').length}
-            </span>
+            <button
+              className={`app-view-pill ${activePanel === 'admin' ? 'active' : ''}`}
+              onClick={() => setActivePanel('admin')}
+            >
+              <span className="app-view-icon">📡</span>
+              <span>
+                <span className="app-view-title">Control Room</span>
+                <span className="app-view-subtitle">Operations Console</span>
+              </span>
+              {activeIncidentCount > 0 && (
+                <span className="app-view-count">{activeIncidentCount}</span>
+              )}
+            </button>
+          </div>
+
+          <div className="app-topbar-status">
+            <div className="app-status-card">
+              <div className={`ws-dot ${wsStatus === 'connected' ? 'connected' : wsStatus === 'reconnecting' ? 'reconnecting' : 'connecting'}`} />
+              <div>
+                <div className="app-status-label">Network State</div>
+                <div className="app-status-value">{systemLabel}</div>
+              </div>
+            </div>
+            <div className="app-status-card">
+              <Activity size={16} />
+              <div>
+                <div className="app-status-label">Active Incidents</div>
+                <div className="app-status-value">{activeIncidentCount}</div>
+              </div>
+            </div>
+            <div className="app-status-card">
+              <RadioTower size={16} />
+              <div>
+                <div className="app-status-label">Resources Online</div>
+                <div className="app-status-value">{resources.filter(r => r.status === 'available').length}/{resources.length || 0}</div>
+              </div>
+            </div>
+          </div>
+        </header>
+
+        <div className="panel-content">
+          {activePanel === 'citizen' ? (
+            <CitizenPanel
+              latestCitizenIncident={incidents.find(i => i.status !== 'RESOLVED')}
+              allDepots={depots}
+            />
+          ) : (
+            <AdminPanel
+              incidents={incidents}
+              resources={resources}
+              depots={depots}
+              agentEvents={agentEvents}
+              hospitals={hospitals}
+              mapFocus={mapFocus}
+              mciActive={mciState.active}
+              onResolveIncident={resolveIncident}
+              onFocusIncident={handleFocusIncident}
+            />
           )}
-        </button>
-
-        {/* WS Status Indicator */}
-        <div className="ws-status-indicator">
-          <div className={`ws-dot ${wsStatus === 'connected' ? 'connected' : wsStatus === 'reconnecting' ? 'reconnecting' : 'connecting'}`} />
-          <span>{wsStatus === 'connected' ? 'Live' : wsStatus === 'reconnecting' ? 'Reconnecting...' : 'Connecting...'}</span>
         </div>
       </div>
-
-      {/* Panel Content */}
-      <div className="panel-content">
-        {activePanel === 'citizen' ? (
-          <CitizenPanel 
-            latestCitizenIncident={incidents.find(i => i.status !== 'RESOLVED')} 
-            allDepots={depots}
-          />
-        ) : (
-          <AdminPanel
-            incidents={incidents}
-            resources={resources}
-            depots={depots}
-            agentEvents={agentEvents}
-            hospitals={hospitals}
-            mapFocus={mapFocus}
-            mciActive={mciState.active}
-            onResolveIncident={resolveIncident}
-            onFocusIncident={handleFocusIncident}
-          />
-        )}
-      </div>
-
 
       <AARModal data={reportData} onClose={() => setReportData(null)} />
     </div>
