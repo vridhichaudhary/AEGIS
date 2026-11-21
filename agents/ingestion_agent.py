@@ -29,7 +29,6 @@ class IngestionAgent:
         "bachche",
         "maa",
         "meri",
-        "wife",
         "ho gaya",
         "bhejo",
         "turant",
@@ -39,7 +38,7 @@ class IngestionAgent:
         has_devanagari = bool(re.search(r"[\u0900-\u097F]", text))
         has_latin = bool(re.search(r"[a-zA-Z]", text))
         lowered = text.lower()
-        has_hinglish_markers = any(marker in lowered for marker in self.HINGLISH_MARKERS)
+        has_hinglish_markers = any(re.search(rf"\b{marker}\b", lowered) for marker in self.HINGLISH_MARKERS)
 
         if has_devanagari and has_latin:
             return "hi-en"

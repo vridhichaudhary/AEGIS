@@ -1,462 +1,82 @@
-# 🚨 AEGIS — AI Emergency Grid & Intelligent Dispatch System
+# AEGIS · Emergency Dispatch Simulator
 
-<div align="center">
+AEGIS is a Delhi NCR emergency-response exercise built with FastAPI, LangGraph, React, Leaflet, WebSockets, and SQLite. It turns simulated English, Hindi, and Hinglish reports into an operator queue with location evidence, triage decisions, and simulated fleet assignments.
 
-![AEGIS](https://img.shields.io/badge/AEGIS-AI%20Emergency%20Dispatch-red?style=for-the-badge)
-![Python](https://img.shields.io/badge/Python-3.11-blue?style=for-the-badge&logo=python)
-![React](https://img.shields.io/badge/React-18-61DAFB?style=for-the-badge&logo=react)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi)
-![LangGraph](https://img.shields.io/badge/LangGraph-Multi--Agent-orange?style=for-the-badge)
+Use exercise transcripts, locations, and caller identities. The deployment model is a single API process with a simulated fleet and hospital inventory.
 
-**A real-time, AI-powered emergency dispatch system for Delhi NCR smart cities.**  
-Processes 112 emergency calls in Hindi, English, and Hinglish — triages, deduplicates, and dispatches the nearest resource within seconds.
+## What to demo
 
-[🌐 Live Demo](https://aegis-mauve-six.vercel.app) · [📡 API](https://aegis-5lpx.onrender.com/docs)
+1. In the **SOS Portal**, load **Hinglish fire** and submit it. Open the **Control Room** to inspect the priority, assigned units, approximate landmark pin, and decision timeline.
+2. Submit **Unknown location**. The report stays off the map and enters location follow-up. Open its incident card, enter a known landmark or choose **Select pin on map**, then save. The same incident ID receives the confirmed location and continues through triage and assignment.
+3. Try **Sector 18** without a city, then use **Sector 18 Noida** as the callback detail. The qualified address maps to the Noida gazetteer entry.
+4. In the WhatsApp simulator, send **Medical + Location** twice. The first report uses the shared coordinates throughout the pipeline. The second links to that report without assigning a second set of units.
+5. Submit a mapped description with an unknown incident category, such as `Please help at Connaught Place.` Open the incident card and confirm a category for simulated dispatch. The operator decision appears in the timeline.
+6. Resolve an assigned incident and watch the simulated fleet become available. Open **Exercise report** to inspect the recorded timeline and download JSON or print to PDF. Use dispatcher commands to ask for P1, fleet, and location follow-up counts.
 
-</div>
+## How it works
 
----
-
-## 🎯 What is AEGIS?
-
-AEGIS is a **Smart City Emergency Dispatch System** built for the scenario where emergency call centers are overwhelmed during a natural disaster or mass casualty event. It uses a **swarm of AI agents** to:
-
-- 📞 Ingest panicked, unstructured emergency calls in **Hindi/English/Hinglish**
-- 🗺️ Extract location, severity, and incident type — even from broken sentences
-- 🔁 Detect and **merge duplicate calls** for the same event
-- ⚡ Assign priority **P1–P5** and dispatch the **nearest available resource**
-- 🏥 Route ambulances to the **best-fit hospital** based on specialty and bed availability
-- 🧠 Predict cascade disasters using pattern analysis
-- 📊 Generate NDMA-compliant After-Action Reports
-
----
-
-## 🏗️ System Architecture
-
-```
-Citizen / WhatsApp / Voice
-         │
-         ▼
-   FastAPI Backend (REST + WebSocket)
-         │
-         ▼
-┌─────────────────────────────────────────┐
-│         SupervisorAgent (LangGraph)      │
-│                                          │
-│  Ingestion → Parsing → Deduplication    │
-│     → Validation → Triage → Dispatch    │
-│              → Feedback                  │
-└─────────────────────────────────────────┘
-         │
-         ▼
-   SQLite (Persistence) + In-Memory State
-         │
-         ▼
-   WebSocket Broadcast → React Frontend
+```mermaid
+flowchart TD
+    Intake["Report and optional location pin"] --> Agents["Ingestion, parsing, deduplication and validation"]
+    Agents --> Triage["Triage and dispatch gate"]
+    Triage -->|Known location and category| Fleet["Simulated unit assignment"]
+    Triage -->|Missing information or category| Review["Operator follow-up or review"]
+    Review --> Agents
+    Fleet --> Store["SQLite and WebSocket updates"]
+    Review --> Store
 ```
 
-The backend runs as a **LangGraph state machine** — each agent is a node that reads and writes to a shared `AgentState` dictionary. The flow is strictly sequential for data integrity, but the entire pipeline completes in **< 2 seconds**.
-
----
-
-## 🤖 Agent Registry — All 12 Agents Explained
-
-### 1. 🧹 IngestionAgent
-**File:** `agents/ingestion_agent.py`
-
-The first node in the pipeline. Receives raw text from any channel (voice, web form, WhatsApp).
-
-**What it does:**
-- Normalizes Unicode characters, smart quotes, and whitespace
-- Detects language: `en` (English), `hi` (Devanagari Hindi), `hi-en` (Hinglish/Romanized Hindi)
-- Uses a set of ~35 Hinglish marker words (`aag`, `behosh`, `bachao`, `gaadi`, etc.) to identify mixed-language calls
-
-**Output:** `normalized_text`, `language_code`
-
----
-
-### 2. 🗺️ ParsingAgent
-**File:** `agents/parsing_agent.py`
-
-The intelligence core. Extracts structured data from free-form emergency text.
-
-**What it does:**
-1. **Location Extraction** — Two-stage:
-   - *Stage 1*: Direct lookup in a 100+ entry geocoder dictionary (Delhi NCR landmarks, malls, hospitals, sectors, metro stations). Longest-match first.
-   - *Stage 2*: Regex patterns for Sector numbers, highways, and landmark suffixes. Strips Hindi postpositions (`mai`, `mein`, `pe`, `ke`) before matching.
-2. **Geocoding** — Maps location names to GPS coordinates using `IndianGeocoder`. Falls back to Sector grid math for unknown sector numbers.
-3. **Incident Classification** — Pattern-based scoring across 5 categories: `fire`, `medical`, `accident`, `natural_disaster`, `violence`.
-4. **Victim Count Extraction** — Parses both digit numbers and Hindi number words (`do`, `teen`, `char`...).
-5. **Severity Clues** — Detects critical terms: `trapped`, `behosh`, `saans nahi`, `ghayal`, `bleeding`, etc.
-6. **Callback Detection** — If no location is found, sets `requires_callback=True` and generates a follow-up question.
-7. **LLM Enhancement** — If Groq/Gemini is available, uses the LLM for higher-accuracy extraction; falls back to heuristics automatically.
-
-**Output:** `location`, `incident_type`, `victim_count`, `severity_clues`, `requires_callback`
-
----
-
-### 3. 🔁 DeduplicationAgent
-**File:** `agents/dedup_agent.py`
-
-Prevents double-dispatch when multiple callers report the same event.
-
-**What it does:**
-- Maintains an in-memory store of all incidents from the **last 30 minutes**
-- For each new call, finds **candidate incidents** within:
-  - ✅ **1.0 km radius** (Haversine distance)
-  - ✅ **15-minute time window**
-- Computes **semantic similarity** using:
-  - `paraphrase-multilingual-MiniLM-L12-v2` embeddings (when available)
-  - `fuzzywuzzy` token-sort ratio as lightweight fallback
-- Normalizes Hinglish text before comparison (`aag` → `fire`, `behosh` → `unconscious`, etc.)
-- **Threshold:** Similarity ≥ 0.75 → duplicate
-- When a duplicate is detected:
-  - The **original incident** gets `merged_count++`
-  - The duplicate is marked `merged_duplicate` and filtered from the active queue
-  - Control room shows **"+N Merged"** badge on the original
-
-**Output:** `is_duplicate`, `duplicate_of`, `duplicate_confidence`
-
----
-
-### 4. ✅ ValidationAgent
-**File:** `agents/validation_agent.py`
-
-Detects prank/hoax calls to protect resources from misuse.
-
-**What it does:**
-- **LLM Mode:** Scores the call on linguistic distress markers, geographical plausibility, consistency of details (8-second timeout)
-- **Rule-Based Fallback:** Starts at 70 points and adjusts based on:
-  - ➕ Genuine distress language (`please`, `bachao`, `jaldi`)
-  - ➕ Specific location provided
-  - ➕ Plausible victim count (1–20)
-  - ➕ Detailed description (> 15 words)
-  - ➖ Victim count > 100
-  - ➖ Call shorter than 5 words
-  - ➖ Hoax terms (`haha`, `prank`, `mazak`, `fake`)
-  - ➖ Excessive punctuation
-- Score < 45 → `REVIEW` flag, dispatch held
-- Score < 70 → `INVESTIGATE` flag
-
-**Output:** `confidence_score`, `validation_flags`
-
----
-
-### 5. 🚦 TriageAgent
-**File:** `agents/triage_agent.py`
-
-Assigns priority (P1–P5) and selects the correct resources to dispatch.
-
-**Priority Scale:**
-| Priority | Label | Example |
-|----------|-------|---------|
-| **P1** | CRITICAL | Fire with entrapment, cardiac arrest, active shooter |
-| **P2** | SERIOUS | Fire without entrapment, severe injury |
-| **P3** | MODERATE | Minor accident, small medical emergency |
-| **P4** | MINOR | Non-urgent, single-victim minor incident |
-| **P5** | NON-EMERGENCY | Informational, prank |
-
-**Resource dispatch logic:**
-- `fire + trapped` → **fire_truck_rescue + ambulance_trauma**
-- `cardiac / unconscious` → **ambulance_cardiac**
-- `accident (major)` → **ambulance_trauma + police**
-- `accident (minor)` → **ambulance + police**
-- `violence (weapon)` → **police + ambulance_trauma**
-- `flood / building collapse` → **rescue_team + ambulance**
-- `fire` → **fire_truck**
-- `medical` → **ambulance**
-
-Also sets the **60-minute Golden Hour deadline** for P1/P2 incidents.
-
-**LLM Mode:** Uses Groq/Gemini for novel/unknown emergency types with the full reasoning prompt.
-
-**Output:** `priority`, `resource_requirements`, `golden_hour_deadline`, `golden_hour_at_risk`
-
----
-
-### 6. 🚑 DispatchAgent
-**File:** `agents/dispatch_agent.py`
-
-Routes the right vehicles to the incident using real-world distances.
-
-**What it does:**
-1. **Nearest-Available Lookup:** Calls `find_nearest_available(resource_type, lat, lng)` from `state/hospitals.py` — sorts all available units of the required type by **Haversine distance**, returns closest first.
-2. **Unit Assignment:** Assigns units to the incident ID (`_unit_assignments` dict), marking them as `dispatched`.
-3. **ETA Calculation:** Uses resource-type speed constants (ambulance: 40 km/h, fire truck: 35 km/h, police: 45 km/h). Falls back to OSRM routing API when available for road-accurate ETAs.
-4. **Hospital Routing:** For ambulance dispatches, scores hospitals by distance AND available beds:
-   - `score = distance / max(available_beds, 0.1)` → lower is better
-   - Filters by specialty (cardiac, trauma, burn)
-   - Issues **DIVERSION ALERT** if nearest hospital is at capacity
-5. **Priority Preemption:** Higher-priority incidents can recall units from lower-priority calls.
-6. **Callback Handling:** If `requires_callback=True`, returns `PENDING_INFO` status without dispatching.
-
-**Output:** `assigned_resources` (with ETA, distance, depot name, route geometry), `dispatch_status`, `destination_hospital`
-
----
-
-### 7. 📚 FeedbackAgent
-**File:** `agents/feedback_agent.py`
-
-The continuous learning loop. Runs at the end of every pipeline execution.
-
-**What it does:**
-- Logs incident outcome to SQLite (`patterns` table)
-- Calculates **triage accuracy** by comparing predicted vs actual priority
-- When enough patterns accumulate, runs LLM analysis to:
-  - Identify systemic patterns (e.g., "P1 accidents at CP always need 2 ambulances")
-  - Generate rule improvement suggestions
-  - Track golden hour performance trends
-- Stores insights in the `insights` table for the admin dashboard
-
-**Output:** Updates `agent_trail` with feedback notes; persists learning patterns to DB
-
----
-
-### 8. 🌊 CascadePredictionAgent
-**File:** `agents/cascade_agent.py`
-
-**Background service** — runs every 60 seconds independently of the main pipeline.
-
-**What it does:**
-- Analyzes all **active incidents** from the last 15 minutes
-- Identifies geographic clustering and temporal escalation patterns
-- Uses LLM to predict:
-  - **Risk Zones:** Areas likely to have new incidents
-  - **Cascade Predictions:** What secondary emergencies may emerge (e.g., flooding leads to electrocution)
-  - **Pre-positioning Orders:** Which resources to move NOW for predicted future incidents
-  - **Threat Level:** LOW / MEDIUM / HIGH / CRITICAL
-- Triggers **MCI Agent** if predictions exceed 85% confidence
-
-**Output:** Broadcasts `threat_intelligence` event to all WebSocket clients → displayed in the Threat Intel panel
-
----
-
-### 9. 🏥 MCIAgent (Mass Casualty Incident)
-**File:** `agents/mci_agent.py`
-
-**Activates when** the system detects a mass casualty event (triggered by 3 criteria):
-- 3+ incidents within 1 km in 5 minutes
-- 2+ P1 incidents in 3 minutes
-- 15+ total victims in 10 minutes
-- Cascade prediction confidence > 85%
-
-**What it does:**
-- Generates **NDMA-compliant MCI Protocol:**
-  - Mutual aid requests from adjacent districts
-  - NGO ambulance network activation (St. John, Red Cross)
-  - Hospital mass casualty plan activation alert
-  - Resource gap analysis
-  - Public media advisory draft
-- On resolution, generates a formal **After-Action Report (AAR):**
-  - Incident timeline
-  - Resource deployment efficiency
-  - Response time vs NDMA targets
-  - Golden hour performance
-  - Improvement recommendations
-
----
-
-### 10. 🎙️ AudioIngestionAgent
-**File:** `agents/audio_agent.py`
-
-Handles voice/audio emergency calls submitted as audio files.
-
-**What it does:**
-- Accepts audio file uploads via the `/api/v1/emergency/audio` endpoint
-- Transcribes speech to text
-- Feeds the transcript into the main pipeline
-
----
-
-### 11. 🖼️ ImageAnalysisAgent
-**File:** `agents/image_analysis_agent.py`
-
-Processes emergency images submitted via WhatsApp or the web interface.
-
-**What it does:**
-- Analyzes incoming images using LLM vision capabilities
-- Generates a text description of what it sees (e.g., "Building on fire, heavy smoke visible, people on roof")
-- Feeds the description as the transcript into the main pipeline
-
----
-
-### 12. 🗣️ CommandAgent
-**File:** `agents/command_agent.py`
-
-Natural language voice command interface for the control room.
-
-**What it does:**
-- Processes operator voice commands like:
-  - *"AEGIS, how many critical incidents are active?"*
-  - *"AEGIS, what is the status of the fire at Connaught Place?"*
-  - *"AEGIS, redirect AMB-101 to Rohini"*
-- Queries the live `active_incidents` state
-- Returns human-readable responses to the operator dashboard
-
----
-
-### 13. 📝 ReportAgent
-**File:** `agents/report_agent.py`
-
-Generates formal incident reports on demand.
-
-**What it does:**
-- Analyzes up to 30 most-recent incidents
-- Produces an NDMA-format After-Action Report covering:
-  - Total incidents by type and priority
-  - Resource utilization
-  - Golden hour compliance rate
-  - Recommendations
-
----
-
-## 🗄️ Data Model
-
-### Resource Depots (`state/hospitals.py`)
-15 depots across Delhi NCR with real-world coordinates:
-- **5 Ambulance Bases** (AIIMS, Safdarjung, GTB, Gurgaon EMS, Noida EMS)
-- **5 Fire Stations** (Connaught Place, Rohini, Lajpat Nagar, Gurgaon Sector 14, Noida Sector 58)
-- **6 Police Stations** (Delhi HQ, Rohini, Lajpat Nagar, Gurgaon Sadar, Noida Sector 20, Janakpuri)
-- **1 NDRF Base** (Noida)
-
-Each unit has `available/dispatched` state managed in memory and persisted to SQLite.
-
-### Hospital Network
-8 hospitals with real-time bed availability, specialty matching (trauma/cardiac/burn/ortho), and automatic diversion alerts.
-
----
-
-## 🛠️ Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| **Backend** | FastAPI (Python 3.11) |
-| **AI Orchestration** | LangGraph (State Machine) |
-| **LLMs** | Groq (Llama-3) + Google Gemini 1.5 Flash |
-| **NLP Fallback** | fuzzywuzzy + regex (no heavy ML) |
-| **Database** | SQLite (via built-in `db` module) |
-| **Real-time** | WebSocket (FastAPI native) |
-| **Routing** | OSRM (Open Source Routing Machine) with Haversine fallback |
-| **Frontend** | React 18 + Vite |
-| **Mapping** | Leaflet.js |
-| **Styling** | Tailwind CSS + custom design system |
-| **Deployment** | Render (backend) + Vercel (frontend) |
-
----
-
-## 🚀 Local Setup
-
-### Prerequisites
-- Python 3.11+
-- Node.js 18+
-
-### Backend
+| Feature | Behavior |
+| --- | --- |
+| Location | Shared and operator-selected pins take precedence. The built-in gazetteer supplies approximate coordinates for matching Delhi NCR landmarks. Missing, ambiguous, and unsupported addresses stay unresolved. Saved legacy coordinates without provenance are kept off the map. |
+| Multilingual intake | Text rules cover selected Hindi, English, and Hinglish phrases. Optional LLM suggestions are schema-validated, and the parser derives the map location from caller evidence. |
+| Duplicate reports | Same-category candidates are checked within 1 km and 15 minutes using normalized text similarity or local multilingual embeddings when enabled. Closed incidents are removed from the candidate store. |
+| Fleet | The dispatcher selects available units by straight-line distance. Pins outside the exercise area are displayed without simulated assignment. The queue records partial assignments and explicitly lists unfilled requests. Depot counts are derived from the same fleet state. |
+| Routes | Both views use the assigned units' backend geometry. Straight-line estimates are dashed. With OSRM configured, a successful road route is solid. OSRM uses its estimated driving time and selection still uses depot distance. |
+| Hospitals | Simulated hospital recommendations use recorded specialty and available beds. The app shows a capacity warning when it cannot find a match. |
+| Reports | SQLite stores the transcript, decision timeline, location provenance, and final status. WebSocket snapshots restore the control room on reconnect. Exercise reports use recorded events and assignments. |
+| Advisory agents | Suggested cascade risks and post-incident insights depend on the configured LLM. The MCI monitor uses observed simulated surges and fleet counts to summarize exercise conditions. |
+
+## Run locally
+
+Create a Python 3.11 or 3.12 environment, then start the API from the repository root.
 
 ```bash
-# Clone the repo
-git clone https://github.com/vridhichaudhary/AEGIS.git
-cd AEGIS
-
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate  # Mac/Linux
-
-# Install dependencies
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
-
-# Set up environment variables
-cp .env.example .env
-# Edit .env — add GROQ_API_KEY and/or GOOGLE_API_KEY
-
-# Start backend
-uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+AEGIS_DISABLE_LLM=1 AEGIS_DB_PATH=./aegis-demo.db uvicorn api.main:app --port 8000
 ```
 
-### Frontend
+Start the portal in a second terminal.
 
 ```bash
 cd portal
-npm install
-
-# Configure API endpoint
-echo "VITE_API_BASE_URL=http://localhost:8000" > .env.local
-echo "VITE_WS_URL=ws://localhost:8000/ws" >> .env.local
-
+npm ci
 npm run dev
-# Visit http://localhost:5173
 ```
 
----
+Open [the portal](http://localhost:5173) or [the API documentation](http://localhost:8000/docs). The `AEGIS_DB_PATH` example starts a separate exercise database. If you point the API to an existing database, it adds the incident payload column and reads existing records.
 
-## 📡 Key API Endpoints
+| Optional capability | Setup |
+| --- | --- |
+| LLM-assisted parsing, validation, and triage | Remove `AEGIS_DISABLE_LLM` from the launch command, set a provider key, and configure `LLM_PROVIDER` and its model. Check `/health` for initialization details. |
+| Road geometry and ETA | Set `USE_MOCK_ROUTING=false` and optionally set `OSRM_BASE_URL` to a reachable OSRM service. Use synthetic coordinates with public routing endpoints. |
+| Uploaded audio | Install the optional `openai-whisper` package and FFmpeg. The upload endpoint checks for a loaded model and a supported file type. Browser dictation uses the browser's speech recognition where available. |
+| WhatsApp image messages | The mock webhook accepts a written image caption as incident evidence. |
+| Hosted portal | Set `VITE_API_BASE_URL` during the frontend build, set `CORS_ORIGINS` on the API, and if needed set `VITE_WS_URL`. Configure persistent disk storage for SQLite when exercise data must survive redeploys. |
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `POST` | `/api/v1/emergency/report` | Submit emergency transcript |
-| `POST` | `/api/v1/emergency/audio` | Submit audio file |
-| `WS` | `/ws` | Real-time event stream |
-| `GET` | `/api/v1/hospitals` | Live hospital bed availability |
-| `GET` | `/api/v1/resources` | Live fleet status + depot locations |
-| `GET` | `/api/v1/callbacks` | Pending callback queue |
-| `POST` | `/api/v1/incidents/{id}/resolve` | Resolve + release resources |
-| `GET` | `/api/v1/report/generate` | Generate After-Action Report |
-| `POST` | `/api/v1/command` | Voice command processing |
+## Verify the implementation
 
----
+```bash
+AEGIS_DISABLE_LLM=1 python -m pytest tests -q
+AEGIS_DISABLE_LLM=1 python -m evaluation.run_evals
+cd portal
+npm run build
+```
 
-## 🎥 Demo Script (Hackathon Presentation)
+The scenario evaluation checks expected category, priority, location provenance, and dispatch decision on 10 labeled synthetic cases. The tests exercise WhatsApp GPS ordering, duplicate suppression, callback continuity, operator review, WebSocket snapshots, fleet release, and exercise report generation. Results describe these fixtures and do not measure real-world dispatch accuracy.
 
-The `/api/v1/demo/start` endpoint runs a scripted 8-act demo:
+**Portfolio description**
 
-| Act | Scenario | Feature Shown |
-|-----|----------|---------------|
-| 1 | Fire at Connaught Place | English triage + P1 dispatch |
-| 2 | `"bhai mere ghar mein aag lag gayi..."` | Hindi/Hinglish parsing |
-| 3 | Second fire call near CP | **Duplicate detection + merge** |
-| 4 | Vague location call | **Callback queue + AI follow-up** |
-| 5 | Flood surge in Sector 14–16 | **Cascade Prediction activation** |
-| 6 | Bus overturned in flood | **MCI Protocol trigger** |
-| 7 | Voice command to AEGIS | **CommandAgent response** |
-| 8 | Resolve incident | **Resource release + AAR generation** |
-
----
-
-## 🗺️ UI Panels
-
-### 🔴 SOS Portal (Citizen View)
-- Voice input (Hindi/English) via browser SpeechRecognition
-- Real-time status track: `Received → Parsing → Triaged → Dispatched`
-- Closest responder card — category-aware (ambulance for accidents, fire for fires)
-- Tactical deployment map with directional vectors to responders
-- Nearby response centers with distance and ETA
-
-### ⚪ Control Room (Admin Dashboard)
-- Live priority queue with P1–P5 labels (CRITICAL / SERIOUS / MODERATE / MINOR / NON-EMERGENCY)
-- "+N Merged" badges on deduplicated incidents
-- Real-time map with incident markers and dispatch routes
-- Hospital capacity grid (beds + specialties, color-coded status)
-- Active fleet monitor with per-unit status
-- Agent activity feed (live reasoning trail)
-- Threat Intelligence panel (cascade predictions)
-- MCI Protocol modal with NDMA response plan
-
----
-
-## 👥 Contributing
-
-Contributions are welcome. Please open an issue first to discuss major changes.
-
----
-
-## 📄 License
-
-MIT License — see [LICENSE](LICENSE) for details.
-
----
-
-<div align="center">
-
-Built for **Smart City Hackathon 2025**  
-*"Saving lives with AI — one call at a time"*
-
-</div>
+> Built a multilingual emergency dispatch simulator with LangGraph and FastAPI, implementing operator-confirmed geolocation, duplicate detection, simulated fleet assignment, and a real-time Leaflet control room. Added a reproducible evaluation suite and exportable decision timelines.

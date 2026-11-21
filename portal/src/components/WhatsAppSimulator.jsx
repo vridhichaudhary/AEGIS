@@ -51,7 +51,7 @@ const WhatsAppSimulator = () => {
         setTimeout(() => {
           const replyMsg = {
             from: 'aegis',
-            text: data.whatsapp_reply || `Emergency received. AEGIS ID: ${data.incident_id?.slice(0, 8).toUpperCase()}. Resources dispatched.`,
+            text: data.whatsapp_reply || `Emergency received. AEGIS ID: ${data.incident_id?.slice(0, 8).toUpperCase()}.`,
             time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false })
           };
           setMessages(prev => [...prev, replyMsg]);
@@ -71,7 +71,7 @@ const WhatsAppSimulator = () => {
   return (
     <div className="card-flush flex flex-col bg-aegis-bg-surface overflow-hidden">
       <div className="section-header flex justify-between items-center">
-        <span>WhatsApp Channel</span>
+        <span>WhatsApp simulator</span>
         <span className="badge badge-whatsapp badge-xs">ACTIVE</span>
       </div>
 

@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { AlertCircle, Search } from 'lucide-react';
 import IncidentCard from './IncidentCard';
 
-const PriorityQueue = ({ incidents, onResolve, onFocus, onAddNote, mViewTimeline, isMci }) => {
+const PriorityQueue = ({ incidents, onResolve, onFocus, isMci }) => {
   const [activeTab, setActiveTab] = useState('ALL');
   const [searchTerm, setSearchTerm] = useState('');
   const scrollRef = useRef(null);
@@ -33,13 +33,13 @@ const PriorityQueue = ({ incidents, onResolve, onFocus, onAddNote, mViewTimeline
   };
 
   const sortedIncidents = [...incidents]
-    .filter(i => i.dispatch_status !== 'merged_duplicate' || i.incident_status === 'RESOLVED')
+    .filter(i => !i.is_duplicate && i.dispatch_status !== 'merged_duplicate')
     .filter(agencyFilter)
     .filter(searchFilter)
     .sort((a, b) => {
       // Resolved items to bottom
-      if (a.incident_status === 'RESOLVED' && b.incident_status !== 'RESOLVED') return 1;
-      if (b.incident_status === 'RESOLVED' && a.incident_status !== 'RESOLVED') return -1;
+      if (a.status === 'RESOLVED' && b.incident_status !== 'RESOLVED') return 1;
+      if (b.status === 'RESOLVED' && a.incident_status !== 'RESOLVED') return -1;
 
       // Priority sort
       const priorityMap = { P1: 5, P2: 4, P3: 3, P4: 2, P5: 1 };
@@ -109,8 +109,6 @@ const PriorityQueue = ({ incidents, onResolve, onFocus, onAddNote, mViewTimeline
               incident={incident}
               onClick={onFocus}
               onResolve={onResolve}
-              onAddNote={onAddNote}
-              mViewTimeline={mViewTimeline}
               isMci={isMci}
             />
           ))

@@ -22,6 +22,9 @@ class AgentState(TypedDict):
     audio_data: Optional[bytes]
     timestamp: datetime
     caller_id: Optional[str]
+    channel: str
+    gps_override: Optional[dict]
+    operator_category: Optional[str]
     
     # Ingestion
     language_code: str
@@ -45,6 +48,8 @@ class AgentState(TypedDict):
     confidence_score: float
     validation_flags: List[str]
     requires_callback: bool
+    missing_fields: List[str]
+    suggested_callback_script: Optional[str]
     
     # Triage
     priority: str
@@ -52,16 +57,20 @@ class AgentState(TypedDict):
     resource_requirements: List[dict]
     estimated_severity: str
     triage_reasoning: str
+    triage_method: str
     golden_hour_deadline: Optional[datetime]
     golden_hour_at_risk: Optional[bool]
     
     # Dispatch
     assigned_resources: List[dict]
+    resource_shortfall: List[dict]
     dispatch_status: str
-    incident_status: Literal["PENDING", "DISPATCHED", "ON_SCENE", "RESOLVED"]
+    incident_status: Literal["PENDING", "PENDING_INFO", "DISPATCHED", "ON_SCENE", "RESOLVED"]
     dispatch_timestamp: Optional[datetime]
     joint_dispatch_memo: Optional[dict]
     agency_timings: Optional[dict]
+    destination_hospital: Optional[dict]
+    hospital_warning: Optional[str]
     
     # Metadata
     agent_trail: List[dict]

@@ -2,10 +2,10 @@ import os
 import shutil
 import tempfile
 import wave
-import numpy as np
 import logging
 
 try:
+    import numpy as np
     import whisper
 except ImportError:
     whisper = None
@@ -31,7 +31,7 @@ class AudioIngestionAgent:
             except Exception as e:
                 logger.error(f"Failed to load Whisper model: {e}")
 
-    def _decode_audio_native(self, file_path: str) -> np.ndarray:
+    def _decode_audio_native(self, file_path: str):
         """
         Fallback decoder using native Python 'wave' module.
         Requires the input file to be a 16kHz, 16-bit Mono WAV file.
@@ -76,37 +76,14 @@ class AudioIngestionAgent:
                     raise ValueError("Without ffmpeg installed, only 16kHz Mono WAV files are supported.")
                 audio_input = self._decode_audio_native(tmp_path)
 
-            # Try Hindi first as primary
-            result = self.model.transcribe(audio_input, language="hi")
-            
-            # Simple heuristic: if confidence is very low, or it detected gibberish, 
-            # we might want to retry with English. But Whisper's transcribe usually 
-            # returns a single result. 
-            # We'll extract the first segment's language probability.
-            
+            result = self.model.transcribe(audio_input, fp16=False)
             segments = result.get("segments", [])
-            avg_prob = 0.0
+            confidence = 0.0
             duration = 0.0
             if segments:
-                # no_speech_prob is available, we want text confidence
-                avg_prob = sum(seg.get("avg_logprob", -1.0) for seg in segments) / len(segments)
-                # Convert logprob to an approximate confidence score 0-1
-                confidence = np.exp(avg_prob)
+                avg_logprob = sum(segment.get("avg_logprob", -1.0) for segment in segments) / len(segments)
+                confidence = float(np.clip(np.exp(avg_logprob), 0.0, 1.0))
                 duration = segments[-1].get("end", 0.0)
-            else:
-                confidence = 0.0
-                
-            # If confidence is terrible in Hindi, let's try auto-detect or English
-            if confidence < 0.6:
-                alt_result = self.model.transcribe(audio_input, language="en")
-                alt_segments = alt_result.get("segments", [])
-                if alt_segments:
-                    alt_avg_prob = sum(seg.get("avg_logprob", -1.0) for seg in alt_segments) / len(alt_segments)
-                    alt_confidence = np.exp(alt_avg_prob)
-                    if alt_confidence > confidence:
-                        result = alt_result
-                        confidence = alt_confidence
-                        duration = alt_segments[-1].get("end", 0.0)
 
             return {
                 "transcript": result.get("text", "").strip(),

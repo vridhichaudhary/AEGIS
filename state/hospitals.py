@@ -322,7 +322,31 @@ def get_fleet_status() -> list:
                 "type": unit["resource_type"],
                 "status": status,
                 "depot": depot["name"],
+                "depot_id": depot["id"],
+                "assigned_to": assignment["incident_id"] if assignment else None,
                 "lat": depot["lat"],
                 "lng": depot["lng"],
             })
     return result
+
+
+def get_depot_status(fleet: list) -> list:
+    """Derive capacity from the same assignments used by the fleet view."""
+    depots = []
+    for depot in RESOURCE_DEPOTS:
+        units = [unit for unit in fleet if unit["depot_id"] == depot["id"]]
+        counts = dict.fromkeys(depot["available"], 0)
+        for unit in units:
+            if unit["status"] != "available":
+                continue
+            kind = unit["type"]
+            key = ("ambulances" if kind.startswith("ambulance") else
+                   "fire_trucks" if kind.startswith("fire") else
+                   "police_units" if kind == "police" else "rescue_teams")
+            counts[key] = counts.get(key, 0) + 1
+        depots.append({
+            "id": depot["id"], "name": depot["name"], "type": depot["type"],
+            "lat": depot["lat"], "lng": depot["lng"],
+            "resources": depot["resources"], "available": counts,
+        })
+    return depots

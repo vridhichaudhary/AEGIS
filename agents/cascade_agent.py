@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 
 class CascadePrediction(BaseModel):
     description: str = Field(description="Description of the likely next incident")
-    confidence_percentage: int = Field(description="Confidence percentage (0-100)")
+    confidence_percentage: int = Field(ge=0, le=100, description="Confidence percentage (0-100)")
 
 class PrepositionOrder(BaseModel):
     resource_type: str = Field(description="Type of resource (e.g., 'ambulance', 'fire_truck', 'police')")
@@ -58,7 +58,7 @@ Identify:
 
         try:
             response = await self.invoke_llm([HumanMessage(content=prompt)])
-            return self.parser.parse(response.content)
+            return ThreatIntelligence.model_validate(self.parser.parse(response.content)).model_dump()
         except Exception as exc:
             print(f"Cascade LLM fallback triggered: {exc}")
             return None

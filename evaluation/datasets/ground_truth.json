@@ -1,0 +1,52 @@
+[
+  {
+    "name": "English building fire",
+    "transcript": "Fire at Connaught Place. Two people are trapped inside.",
+    "expected": {"category": "fire", "priority": "P1", "location": "gazetteer", "dispatch": "assigned"}
+  },
+  {
+    "name": "Hindi building fire",
+    "transcript": "कनॉट प्लेस में आग लगी है, लोग फंसे हैं।",
+    "expected": {"category": "fire", "priority": "P1", "location": "gazetteer", "dispatch": "assigned"}
+  },
+  {
+    "name": "Hinglish fire with trapped occupants",
+    "transcript": "Aag lagi hai Sector 14 mein, 5 log faase hain!",
+    "expected": {"category": "fire", "priority": "P1", "location": "gazetteer", "dispatch": "assigned"}
+  },
+  {
+    "name": "Collision with injuries",
+    "transcript": "Two trucks collided near Iffco Chowk. Driver unconscious, help needed.",
+    "expected": {"category": "accident", "priority": "P1", "location": "gazetteer", "dispatch": "assigned"}
+  },
+  {
+    "name": "Cardiac emergency without an address",
+    "transcript": "Heart attack ho raha hai, please ambulance bhejo jaldi.",
+    "expected": {"category": "medical", "priority": "P1", "location": "unresolved", "dispatch": "awaiting_location"}
+  },
+  {
+    "name": "Unqualified sector number",
+    "transcript": "My father is unconscious at Sector 18. Please send an ambulance.",
+    "expected": {"category": "medical", "priority": "P1", "location": "unresolved", "dispatch": "awaiting_location"}
+  },
+  {
+    "name": "Qualified Noida sector",
+    "transcript": "Heart attack at Sector 18 Noida, patient unconscious. Send an ambulance.",
+    "expected": {"category": "medical", "priority": "P1", "location": "gazetteer", "dispatch": "assigned"}
+  },
+  {
+    "name": "Unrecognized landmark",
+    "transcript": "Fire at Fictional Sunrise Hospital. Two people are trapped.",
+    "expected": {"category": "fire", "priority": "P1", "location": "unresolved", "dispatch": "awaiting_location"}
+  },
+  {
+    "name": "Flood with rooftop rescue",
+    "transcript": "Yamuna ka paani gharon mein ghus gaya hai, bachche chhat par phase hain.",
+    "expected": {"category": "natural_disaster", "priority": "P1", "location": "unresolved", "dispatch": "awaiting_location"}
+  },
+  {
+    "name": "Clearly informational test call",
+    "transcript": "Hello testing 112 line working hai kya",
+    "expected": {"category": "other", "priority": "P5", "location": "unresolved", "dispatch": "not_required"}
+  }
+]
