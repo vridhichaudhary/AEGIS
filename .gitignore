@@ -6,3 +6,4 @@ __pycache__/
 aegis.db
 .venv/
 PRESENTATION_NOTES.md
+aegis-demo.db

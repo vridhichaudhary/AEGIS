@@ -70,6 +70,8 @@ HINGLISH_MAP = {
     "aag lag gayi": "fire",
     "aag lag gai": "fire",
     "aag": "fire",
+    "cylinder phat gaya": "cylinder blast",
+    "jal gaye": "burn",
     "jal gaya": "fire",
     "jal gayi": "fire",
     "dhua": "smoke",
@@ -251,11 +253,10 @@ class DeduplicationAgent:
         cutoff = now - timedelta(minutes=self.TIME_WINDOW_MINUTES)
         candidates = []
         for entry in self._store:
-            if entry["timestamp"] < cutoff:
+            if entry["timestamp"] < cutoff or entry["category"] != category:
                 continue
             dist = haversine_km(lat, lng, entry["lat"], entry["lng"])
             if dist <= self.RADIUS_KM:
-                # Add if category matches OR if it's very close (semantic check will do the rest)
                 candidates.append(entry)
         return candidates
 
@@ -292,7 +293,8 @@ class DeduplicationAgent:
             "duplicate_confidence": float,   # 0.0–1.0
           }
         """
-        candidates = self._candidate_incidents(lat, lng, category, now)
+        candidates = [entry for entry in self._candidate_incidents(lat, lng, category, now)
+                      if entry["incident_id"] != incident_id]
 
         if not candidates:
             return {"is_duplicate": False, "duplicate_of": None, "duplicate_confidence": 0.0}
@@ -322,6 +324,9 @@ class DeduplicationAgent:
 
         return {"is_duplicate": False, "duplicate_of": None, "duplicate_confidence": 0.0}
 
+    def forget(self, incident_id: str):
+        self._store = [entry for entry in self._store if entry["incident_id"] != incident_id]
+
     def store_incident(
         self,
         incident_id: str,
@@ -333,6 +338,7 @@ class DeduplicationAgent:
         embedding: Optional[Any],
     ):
         """Add incident to the in-process store."""
+        self.forget(incident_id)
         self._store.append(
             {
                 "incident_id": incident_id,
@@ -353,12 +359,19 @@ class DeduplicationAgent:
     # ------------------------------------------------------------------
     async def process(self, state: dict) -> dict:
         location = state.get("location") or {}
-        lat = location.get("latitude", 28.6139)
-        lng = location.get("longitude", 77.2090)
+        lat = location.get("latitude")
+        lng = location.get("longitude")
         category = (state.get("incident_type") or {}).get("category", "other")
         transcript = state.get("normalized_text", "")
         incident_id = state["incident_id"]
         now = state["timestamp"]
+
+        if lat is None or lng is None or category == "other":
+            state["agent_trail"].append({
+                "agent": "deduplication", "timestamp": datetime.now(), "decision": "Deferred",
+                "reasoning": "Deduplication requires a mapped location and a recognized incident type.",
+            })
+            return state
 
         result = self.check_duplicate(incident_id, transcript, category, lat, lng, now)
 

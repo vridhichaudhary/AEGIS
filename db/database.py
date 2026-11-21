@@ -4,7 +4,7 @@ import os
 from datetime import datetime
 from typing import List, Dict, Any
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "aegis.db")
+DB_PATH = os.path.abspath(os.getenv("AEGIS_DB_PATH", os.path.join(os.path.dirname(os.path.dirname(__file__)), "aegis.db")))
 
 def get_connection():
     return sqlite3.connect(DB_PATH)
@@ -33,10 +33,15 @@ def init_db():
                 created_at TEXT,
                 resolved_at TEXT,
                 merged_count INTEGER DEFAULT 1,
-                agent_trail TEXT  -- JSON array of agent events
+                agent_trail TEXT,
+                payload TEXT
             )
         ''')
         
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(incidents)")}
+        if "payload" not in columns:
+            cursor.execute("ALTER TABLE incidents ADD COLUMN payload TEXT")
+
         # Resources Table
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS resources (
@@ -86,69 +91,85 @@ def init_db():
         conn.commit()
 
 def save_incident(incident: Dict[str, Any]):
+    save_incidents(incident)
+
+
+def save_incidents(*incidents: Dict[str, Any]):
     with get_connection() as conn:
-        cursor = conn.cursor()
-        
-        # Extract location info safely
-        location_data = incident.get("location", {})
-        if not isinstance(location_data, dict):
-            location_data = {}
-        location_text = location_data.get("raw_text", "Unknown")
-        lat = location_data.get("latitude")
-        lng = location_data.get("longitude")
+        for incident in incidents:
+            _write_incident(conn, incident)
 
-        # Extract incident type safely
-        incident_type = incident.get("incident_type", {})
-        if not isinstance(incident_type, dict):
-            incident_type = {}
-        category = incident_type.get("category", "Unknown")
 
-        cursor.execute('''
-            INSERT OR REPLACE INTO incidents (
-                id, transcript, category, location, lat, lng, priority, status,
-                assigned_resources, eta_minutes, authenticity_score, is_duplicate,
-                golden_hour_deadline, golden_hour_at_risk, created_at, resolved_at,
-                merged_count, agent_trail
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            incident.get("incident_id"),
-            incident.get("transcript", incident.get("raw_transcript", "")),
-            category,
-            location_text,
-            lat,
-            lng,
-            incident.get("priority", "P3"),
-            incident.get("dispatch_status", incident.get("status", "PENDING")),
-            json.dumps(incident.get("assigned_resources", [])),
-            incident.get("eta_minutes"),
-            incident.get("authenticity_score"),
-            1 if incident.get("is_duplicate") else 0,
-            incident.get("golden_hour_deadline"),
-            1 if incident.get("golden_hour_at_risk") else 0,
-            incident.get("timestamp", datetime.now().isoformat()),
-            None, # resolved_at
-            incident.get("merged_count", 1),
-            json.dumps(incident.get("agent_trail", []))
-        ))
-        conn.commit()
+def _write_incident(conn, incident):
+    # Extract location info safely
+    location_data = incident.get("location", {})
+    if not isinstance(location_data, dict):
+        location_data = {}
+    location_text = location_data.get("raw_text", "Unknown")
+    lat = location_data.get("latitude")
+    lng = location_data.get("longitude")
 
-def get_all_incidents(limit: int = 100) -> List[Dict[str, Any]]:
+    # Extract incident type safely
+    incident_type = incident.get("incident_type", {})
+    if not isinstance(incident_type, dict):
+        incident_type = {}
+    category = incident_type.get("category", "Unknown")
+
+    conn.execute('''
+        INSERT OR REPLACE INTO incidents (
+            id, transcript, category, location, lat, lng, priority, status,
+            assigned_resources, eta_minutes, authenticity_score, is_duplicate,
+            golden_hour_deadline, golden_hour_at_risk, created_at, resolved_at,
+            merged_count, agent_trail, payload
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', (
+        incident.get("incident_id"),
+        incident.get("transcript", incident.get("raw_transcript", "")),
+        category,
+        location_text,
+        lat,
+        lng,
+        incident.get("priority", "P3"),
+        incident.get("status", "PENDING"),
+        json.dumps(incident.get("assigned_resources", [])),
+        incident.get("eta_minutes"),
+        incident.get("authenticity_score"),
+        1 if incident.get("is_duplicate") else 0,
+        incident.get("golden_hour_deadline"),
+        1 if incident.get("golden_hour_at_risk") else 0,
+        incident.get("timestamp", datetime.now().isoformat()),
+        incident.get("resolved_at"),
+        incident.get("merged_count", 1),
+        json.dumps(incident.get("agent_trail", [])),
+        json.dumps(incident)
+    ))
+
+def get_all_incidents(limit: int = 100, *, active_only: bool = False) -> List[Dict[str, Any]]:
     with get_connection() as conn:
         conn.row_factory = sqlite3.Row
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM incidents ORDER BY created_at DESC LIMIT ?', (limit,))
+        where = " WHERE status != 'RESOLVED' AND is_duplicate = 0 AND status != 'merged_duplicate'" if active_only else ""
+        cursor.execute(f"SELECT * FROM incidents{where} ORDER BY created_at DESC LIMIT ?", (limit,))
         rows = cursor.fetchall()
         
         incidents = []
         for row in rows:
+            if row["payload"]:
+                incident = json.loads(row["payload"])
+                incident.update(status=row["status"], resolved_at=row["resolved_at"])
+                if row["status"] == "RESOLVED":
+                    incident["incident_status"] = "RESOLVED"
+                incidents.append(incident)
+                continue
             # Reconstruct the incident dictionary structure expected by active_incidents
             incidents.append({
                 "incident_id": row["id"],
                 "transcript": row["transcript"],
                 "incident_type": {"category": row["category"]},
-                "location": {"raw_text": row["location"], "latitude": row["lat"], "longitude": row["lng"]},
+                "location": {"raw_text": row["location"], "latitude": None, "longitude": None, "source": "legacy_unverified"},
                 "priority": row["priority"],
                 "status": row["status"],
+                "incident_status": "RESOLVED" if row["status"] == "RESOLVED" else "PENDING",
                 "dispatch_status": row["status"],
                 "assigned_resources": json.loads(row["assigned_resources"]) if row["assigned_resources"] else [],
                 "eta_minutes": row["eta_minutes"],

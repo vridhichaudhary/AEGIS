@@ -1,10 +1,11 @@
 import asyncio
+from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, File, UploadFile, Form, Query
 import random
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agents.supervisor import SupervisorAgent
 from agents.base_agent import BaseAgent
@@ -22,14 +23,28 @@ try:
 except ImportError:
     MULTIPART_AVAILABLE = False
 
-app = FastAPI(title="AEGIS API", version="1.0.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    tasks = await startup_event()
+    try:
+        yield
+    finally:
+        if DEMO_TASK:
+            tasks.append(DEMO_TASK)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+app = FastAPI(title="AEGIS API", version="1.0.0", lifespan=lifespan)
 
 # CORS Setup
 origins = [
     "https://aegis-mauve-six.vercel.app",
     "http://localhost:5173",
     "http://localhost:3000",
-    "*"  # Allow all for production debugging as requested
+    "http://127.0.0.1:5173",
+    *[origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()],
 ]
 
 app.add_middleware(
@@ -73,7 +88,7 @@ report_agent = ReportAgent()
 audio_agent = AudioIngestionAgent()
 from agents.mci_agent import MCIAgent
 from agents.image_analysis_agent import ImageAnalysisAgent
-from state.hospitals import HOSPITALS, haversine_distance
+from state.hospitals import HOSPITALS, assign_unit, get_depot_status, get_fleet_status, haversine_distance
 active_incidents: Dict[str, dict] = {}
 CALLBACK_QUEUE: List[dict] = []
 CALLBACK_METRICS = {"total_pending": 0, "total_resolved": 0}
@@ -85,8 +100,10 @@ MCI_STATE = {
     "zone": None,
     "details": None
 }
+MCI_INCIDENT_IDS: set[str] = set()
 LATEST_THREAT_INTEL = None
 DEMO_TASK = None
+INCIDENT_UPDATES_IN_PROGRESS: set[str] = set()
 
 DEMO_SCRIPT = [
     {
@@ -156,6 +173,7 @@ async def run_demo_loop(speed: float = 1.0):
     global DEMO_TASK
     try:
         first_incident_id = None
+        demo_callback_id = None
         for step in DEMO_SCRIPT:
             # Respect speed for delay
             if step["delay"] > 0:
@@ -173,27 +191,29 @@ async def run_demo_loop(speed: float = 1.0):
             # Handle Transcripts
             if "transcripts" in step:
                 for t in step["transcripts"]:
-                    result = await supervisor.process_call(t)
+                    result = await supervisor.process_call(t, channel="simulation")
                     await publish_result(result)
                     if step["act"] == 1:
-                        first_incident_id = result["incident_id"]
+                        first_incident_id = result.get("duplicate_of") or result["incident_id"]
+                    if step["act"] == 4 and result["dispatch_status"] == "awaiting_location":
+                        demo_callback_id = result["incident_id"]
                     # Add small jitter between batch calls
                     await asyncio.sleep(2 / speed)
             
             # Handle Callback Simulation (Act 4)
             if step["act"] == 4:
                 await asyncio.sleep(10 / speed)
-                # Find the latest pending callback
-                if CALLBACK_QUEUE:
-                    cb = CALLBACK_QUEUE[-1]
-                    await process_callback_response(cb["incident_id"], CallbackResponseRequest(additional_info="I am at Central Park, Gate 2."))
+                if demo_callback_id and any(entry["incident_id"] == demo_callback_id for entry in CALLBACK_QUEUE):
+                    await process_callback_response(
+                        demo_callback_id, CallbackResponseRequest(additional_info="I am at Connaught Place, New Delhi."),
+                    )
 
             # Handle Commands (Act 7)
             if "command" in step:
                 await manager.broadcast({"type": "voice_demo_trigger", "payload": step["command"]})
                 await asyncio.sleep(2 / speed)
                 res = await process_voice_command(CommandAgentRequest(command=step["command"]))
-                await manager.broadcast({"type": "voice_demo_response", "payload": res["response"]})
+                await manager.broadcast({"type": "voice_demo_response", "payload": res["spoken_response"]})
 
             # Handle Actions (Act 8)
             if step.get("action") == "resolve_first" and first_incident_id:
@@ -211,7 +231,9 @@ async def run_demo_loop(speed: float = 1.0):
 async def proactive_threat_loop():
     while True:
         await asyncio.sleep(60)
-        recent = list(active_incidents.values())
+        cutoff = datetime.now().timestamp() - 900
+        recent = [incident for incident in current_incidents()
+                  if datetime.fromisoformat(incident["timestamp"]).timestamp() >= cutoff]
         if recent:
             try:
                 intel = await cascade_agent.analyze(recent)
@@ -221,21 +243,6 @@ async def proactive_threat_loop():
                     await manager.broadcast({"type": "threat_intelligence", "payload": intel})
             except Exception as e:
                 print(f"Error in threat loop: {e}")
-
-async def resource_refresh_loop():
-    """Background task to simulate resources returning to base."""
-    while True:
-        await asyncio.sleep(90)
-        # Randomly select a few resources that are in the registry but maybe marked as returning
-        # In this simple mock, we'll just broadcast that some units are now 'available' again
-        # to clear any UI 'returning' states
-        await manager.broadcast({
-            "type": "resource_update",
-            "payload": [
-                {"id": "AMB-101", "status": "available", "name": "AMB-101", "type": "ambulance"},
-                {"id": "FIR-401", "status": "available", "name": "FIR-401", "type": "fire_truck"}
-            ]
-        })
 
 async def hospital_bed_fluctuation_loop():
     """Background task to simulate real-time hospital bed availability."""
@@ -273,21 +280,31 @@ async def hospital_bed_fluctuation_loop():
                 "payload": HOSPITALS
             })
 
-@app.on_event("startup")
 async def startup_event():
     # Initialize SQLite database
     db.init_db()
     
-    # Hydrate in-memory state
-    history = db.get_all_incidents(limit=100)
-    for inc in history:
-        if inc["status"] != "RESOLVED" and inc["status"] != "merged_duplicate":
-            active_incidents[inc["incident_id"]] = inc
+    for incident in reversed(db.get_all_incidents(limit=-1, active_only=True)):
+        incident_id = incident["incident_id"]
+        active_incidents[incident_id] = incident
+        if incident.get("requires_callback") and incident["dispatch_status"] == "awaiting_location":
+            CALLBACK_QUEUE.append(callback_for(incident))
+        if (incident.get("location") or {}).get("source") in {"shared_pin", "operator_pin", "gazetteer"}:
+            for unit in incident.get("assigned_resources", []):
+                assign_unit(unit["resource_id"], incident_id, incident["priority"])
+            if incident.get("incident_type", {}).get("category") != "other" and incident["dispatch_status"] not in {"review_required", "not_required", "awaiting_location"}:
+                supervisor.dedup.store_incident(
+                    incident_id, incident.get("transcript", ""), incident["incident_type"]["category"],
+                    incident["location"]["latitude"], incident["location"]["longitude"],
+                    datetime.fromisoformat(incident["timestamp"]), None,
+                )
+    CALLBACK_METRICS["total_pending"] = len(CALLBACK_QUEUE)
 
-    asyncio.create_task(proactive_threat_loop())
-    asyncio.create_task(resource_refresh_loop())
-    asyncio.create_task(hospital_bed_fluctuation_loop())
-    asyncio.create_task(mci_surge_detector_loop())
+    return [
+        asyncio.create_task(proactive_threat_loop()),
+        asyncio.create_task(hospital_bed_fluctuation_loop()),
+        asyncio.create_task(mci_surge_detector_loop()),
+    ]
 
 async def mci_surge_detector_loop():
     """Background task to detect Mass Casualty Incidents."""
@@ -297,7 +314,7 @@ async def mci_surge_detector_loop():
         
         recent_incidents = []
         now = datetime.now()
-        for inc in active_incidents.values():
+        for inc in current_incidents():
             if inc.get("timestamp"):
                 try:
                     ts = datetime.fromisoformat(inc["timestamp"])
@@ -316,12 +333,12 @@ async def mci_surge_detector_loop():
                 cluster_count = 1
                 lat1 = inc1.get("location", {}).get("latitude")
                 lng1 = inc1.get("location", {}).get("longitude")
-                if not lat1 or not lng1: continue
+                if lat1 is None or lng1 is None: continue
                 
                 for inc2 in recent_5m[i+1:]:
                     lat2 = inc2.get("location", {}).get("latitude")
                     lng2 = inc2.get("location", {}).get("longitude")
-                    if not lat2 or not lng2: continue
+                    if lat2 is None or lng2 is None: continue
                     dist = haversine_distance(lat1, lng1, lat2, lng2)
                     if dist <= 1.0:
                         cluster_count += 1
@@ -339,23 +356,22 @@ async def mci_surge_detector_loop():
 
             # 3. Victim count > 15 in last 10 mins
             if not trigger:
-                total_victims = sum(int(i.get("incident_type", {}).get("victim_count", 0) or 0) for i in recent_incidents)
+                total_victims = sum(int(i.get("victim_count", 0) or 0) for i in recent_incidents)
                 if total_victims >= 15:
                     trigger = True
                     zone = "Regional Zone"
 
-            # 4. Cascade Prediction > 85%
-            if not trigger and LATEST_THREAT_INTEL:
-                for pred in LATEST_THREAT_INTEL.get("cascade_predictions", []):
-                    if pred.get("confidence_percentage", 0) > 85:
-                        trigger = True
-                        zone = LATEST_THREAT_INTEL.get("risk_zones", ["Predicted Danger Zone"])[0]
-                        break
+        if trigger:
+            MCI_INCIDENT_IDS.update(incident["incident_id"] for incident in recent_incidents)
 
         if trigger and not MCI_STATE["active"]:
             MCI_STATE["active"] = True
             MCI_STATE["zone"] = zone
-            resources = {"ambulances_available": random.randint(2, 6), "fire_trucks_available": random.randint(1, 4)}
+            free = [unit for unit in get_fleet_status() if unit["status"] == "available"]
+            resources = {
+                "ambulances_available": sum(unit["type"].startswith("ambulance") for unit in free),
+                "fire_trucks_available": sum(unit["type"].startswith("fire") for unit in free),
+            }
             mci_response = await mci_agent.generate_mci_response(zone, len(recent_incidents), resources)
             MCI_STATE["details"] = mci_response
             await manager.broadcast({"type": "mci_activation", "payload": {"zone": zone, "details": mci_response}})
@@ -363,46 +379,51 @@ async def mci_surge_detector_loop():
         elif not trigger and MCI_STATE["active"]:
             # MCI Resolved - Generate AAR
             current_zone = MCI_STATE["zone"]
-            aar_report = await mci_agent.generate_aar_report(current_zone, recent_incidents)
+            records = [active_incidents[incident_id] for incident_id in MCI_INCIDENT_IDS if incident_id in active_incidents]
+            aar_report = await mci_agent.generate_aar_report(current_zone, records)
+            MCI_INCIDENT_IDS.clear()
             MCI_STATE["active"] = False
             MCI_STATE["details"] = None
             await manager.broadcast({"type": "mci_resolved", "payload": {"zone": current_zone, "aar_report": aar_report}})
 
 
+class LocationPin(BaseModel):
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+
+
 class EmergencyCallRequest(BaseModel):
-    transcript: str
+    transcript: str = Field(min_length=3, max_length=4000)
     caller_id: Optional[str] = None
-
+    location: Optional[LocationPin] = None
     model_config = {"str_strip_whitespace": True}
-
-    def validate_transcript(self):
-        if not self.transcript or len(self.transcript.strip()) < 3:
-            raise ValueError("Transcript must be at least 3 characters.")
 
 
 class CommandAgentRequest(BaseModel):
-    command: str
+    command: str = Field(min_length=1, max_length=500)
     language: str = "en-US"
 
+
 class CallbackResponseRequest(BaseModel):
-    additional_info: str
+    additional_info: str = Field(default="", max_length=2000)
+    location: Optional[LocationPin] = None
+
+
+class OperatorReviewRequest(BaseModel):
+    category: Literal["fire", "medical", "accident", "natural_disaster", "violence"]
+
 
 class WhatsAppTextBody(BaseModel):
-    body: str
+    body: str = Field(max_length=4000)
 
-class WhatsAppLocation(BaseModel):
-    latitude: float
-    longitude: float
 
 class WhatsAppMessage(BaseModel):
-    sender: str = "" 
-    type: str = "text"
+    sender: str = Field(default="Unknown", alias="from")
+    type: Literal["text", "location", "image"] = "text"
     text: Optional[WhatsAppTextBody] = None
-    location: Optional[WhatsAppLocation] = None
+    location: Optional[LocationPin] = None
     image: Optional[dict] = None
 
-    # WhatsApp uses 'from' as key which is a reserved Python word
-    model_config = {"populate_by_name": True}
 
 class EmergencyCallResponse(BaseModel):
     incident_id: str
@@ -419,6 +440,10 @@ class EmergencyCallResponse(BaseModel):
     suggested_callback_script: Optional[str] = None
     channel: Optional[str] = None
     agent_trail: List[dict]
+    destination_hospital: Optional[dict] = None
+    hospital_warning: Optional[str] = None
+    resource_shortfall: List[dict] = Field(default_factory=list)
+    transcript: str = ""
     golden_hour_deadline: Optional[str] = None
     golden_hour_at_risk: Optional[bool] = None
     authenticity_score: Optional[int] = None
@@ -433,10 +458,18 @@ def serialize_incident(result: dict) -> dict:
     return {
         "incident_id": result["incident_id"],
         "priority": result["priority"],
-        "status": result.get("status", result.get("dispatch_status", "pending")),
+        "status": "merged_duplicate" if result.get("is_duplicate") else result.get("incident_status", "PENDING"),
+        "incident_status": result.get("incident_status"),
         "dispatch_status": result.get("dispatch_status", "pending"),
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": result["timestamp"].isoformat(),
         "location": result.get("location"),
+        "victim_count": result.get("victim_count", 0),
+        "eta_minutes": min((unit["eta_minutes"] for unit in result.get("assigned_resources", [])), default=None),
+        "resource_shortfall": result.get("resource_shortfall", []),
+        "validation_flags": result.get("validation_flags", []),
+        "agent_trail": [
+            {**event, "timestamp": event["timestamp"].isoformat()} for event in result.get("agent_trail", [])
+        ],
         "incident_type": result.get("incident_type"),
         "assigned_resources": result.get("assigned_resources", []),
         "errors": result.get("errors", []),
@@ -460,101 +493,76 @@ def serialize_incident(result: dict) -> dict:
     }
 
 
+def current_incidents():
+    return [incident for incident in active_incidents.values()
+            if incident["status"] != "RESOLVED" and not incident.get("is_duplicate")]
+
+
+def callback_for(incident: dict, attempts: int = 1) -> dict:
+    return {
+        "caller_id": "Unknown",
+        "incident_id": incident["incident_id"],
+        "transcript": incident.get("transcript", ""),
+        "missing_fields": incident.get("missing_fields", []),
+        "suggested_question": incident.get("suggested_callback_script"),
+        "created_at": incident["timestamp"],
+        "attempts": attempts,
+    }
+
+
+def response_for(incident):
+    return {**incident, "status": "processed"}
+
+
 async def publish_result(result: dict):
-    """Broadcast incident and resource updates to WebSocket clients"""
-    incident_payload = serialize_incident(result)
-    
-    # Handle Deduplication Merging
-    if incident_payload.get("is_duplicate") and incident_payload.get("duplicate_of"):
-        orig_id = incident_payload["duplicate_of"]
-        if orig_id in active_incidents:
-            # Update original incident with incremented merged count
-            orig = active_incidents[orig_id]
-            orig["merged_count"] = orig.get("merged_count", 1) + 1
-            orig["last_merged_at"] = datetime.now().isoformat()
-            
-            # Broadcast update for the ORIGINAL incident
-            await manager.broadcast({"type": "incident_update", "payload": orig})
-            
-            # Persist updated original to DB
-            asyncio.create_task(asyncio.to_thread(db.save_incident, orig))
-            
-            # Store the duplicate record as 'merged_duplicate' in active_incidents
-            incident_payload["dispatch_status"] = "merged_duplicate"
-            active_incidents[result["incident_id"]] = incident_payload
+    """Persist the decision before broadcasting it to clients."""
+    if result["dispatch_status"] == "pending":
+        raise HTTPException(status_code=503, detail="Incident processing could not be completed.")
+    incident = serialize_incident(result)
+    new_events = incident["agent_trail"]
+    incident_id = incident["incident_id"]
+    previous = active_incidents.get(incident_id, {})
+    incident["timestamp"] = previous.get("timestamp", incident["timestamp"])
+    incident["merged_count"] = previous.get("merged_count", 1)
+    incident["agent_trail"] = previous.get("agent_trail", []) + incident["agent_trail"]
+
+    parent = active_incidents.get(incident.get("duplicate_of")) if incident["is_duplicate"] else None
+    if parent and parent.get("status") != "RESOLVED":
+        parent = {**parent, "merged_count": parent.get("merged_count", 1) + 1}
     else:
-        # Standard incident
-        incident_payload["merged_count"] = 1
-        active_incidents[result["incident_id"]] = incident_payload
-    
-    # Handle callback queue logic
-    if incident_payload.get("requires_callback"):
-        callback_entry = {
-            "caller_id": result.get("caller_id") or "Unknown",
-            "incident_id": result["incident_id"],
-            "transcript": result.get("raw_transcript", ""),
-            "missing_fields": incident_payload.get("missing_fields", []),
-            "suggested_question": incident_payload.get("suggested_callback_script", ""),
-            "created_at": datetime.now().isoformat(),
-            "attempts": 1
-        }
-        # Check if already in queue to avoid duplicates
-        if not any(c["incident_id"] == result["incident_id"] for c in CALLBACK_QUEUE):
-            CALLBACK_QUEUE.append(callback_entry)
-            CALLBACK_METRICS["total_pending"] += 1
-            await manager.broadcast({"type": "callback_update", "payload": callback_entry})
+        parent = None
+    try:
+        db.save_incidents(incident, parent) if parent else db.save_incident(incident)
+    except Exception:
+        await supervisor.dispatch.release_resources(incident_id)
+        supervisor.dedup.forget(incident_id)
+        raise
+    if parent:
+        active_incidents[parent["incident_id"]] = parent
+    active_incidents[incident_id] = incident
 
-    # Broadcast current incident update
-    await manager.broadcast({"type": "incident_update", "payload": incident_payload})
+    queued = next((entry for entry in CALLBACK_QUEUE if entry["incident_id"] == incident_id), None)
+    if queued:
+        CALLBACK_QUEUE.remove(queued)
+    if incident["requires_callback"] and incident["dispatch_status"] == "awaiting_location":
+        entry = callback_for(incident, queued["attempts"] + 1 if queued else 1)
+        CALLBACK_QUEUE.append(entry)
+    elif queued:
+        CALLBACK_METRICS["total_resolved"] += 1
+    CALLBACK_METRICS["total_pending"] = len(CALLBACK_QUEUE)
 
-    
-    # Broadcast resource updates with full details
-    resources_to_broadcast = []
-    for resource in result.get("assigned_resources", []):
-        # Fetch full resource data from Redis or fallback
-        resource_data = {
-            "id": resource["resource_id"],
-            "name": resource["resource_id"],
-            "type": resource["resource_type"],
-            "status": "dispatched",
-            "location": result.get("location"),  # Incident location
-        }
-        resources_to_broadcast.append(resource_data)
-    
-    if resources_to_broadcast:
-        await manager.broadcast({
-            "type": "resource_update",
-            "payload": resources_to_broadcast
-        })
-    
-    # Broadcast agent events
-    for event in result.get("agent_trail", []):
-        safe_event = {
-            "agent": event.get("agent"),
-            "decision": event.get("decision"),
-            "reasoning": event.get("reasoning"),
-            "duplicate_confidence": event.get("duplicate_confidence"),
-            "duplicate_of": event.get("duplicate_of"),
-            "timestamp": event["timestamp"].isoformat() if hasattr(event.get("timestamp"), "isoformat") else str(event.get("timestamp"))
-        }
-        await manager.broadcast({"type": "agent_event", "payload": safe_event})
+    if parent:
+        await manager.broadcast({"type": "incident_update", "payload": parent})
+    await manager.broadcast({"type": "incident_update", "payload": incident})
+    if result.get("assigned_resources"):
+        await broadcast_fleet()
+    for event in new_events:
+        await manager.broadcast({"type": "agent_event", "payload": {**event, "incident_id": incident_id}})
+    return incident
 
-    # Check for and broadcast preemption events from the DispatchAgent
-    if hasattr(supervisor.dispatch, "preemption_events"):
-        while supervisor.dispatch.preemption_events:
-            p_event = supervisor.dispatch.preemption_events.pop(0)
-            await manager.broadcast({
-                "type": "system_alert",
-                "payload": {
-                    "level": "warning",
-                    "title": "Priority Preemption",
-                    "message": p_event["message"],
-                    "incident_id": p_event["to_incident"]
-                }
-            })
 
-    # Save to SQLite asynchronously
-    asyncio.create_task(asyncio.to_thread(db.save_incident, incident_payload))
+async def broadcast_fleet():
+    await manager.broadcast({"type": "resource_update", "payload": await get_resources()})
 
 
 @app.get("/health")
@@ -562,6 +570,7 @@ async def health_check():
     llm_probe = BaseAgent()
     return {
         "status": "healthy",
+        "mode": "simulation",
         "timestamp": datetime.now().isoformat(),
         "llm": llm_probe.llm_diagnostics,
         "redis_host": settings.REDIS_HOST,
@@ -570,63 +579,42 @@ async def health_check():
 
 
 @app.post("/api/v1/webhook/whatsapp")
-async def whatsapp_webhook(request: dict):
-    """
-    Mock WhatsApp Business API webhook.
-    Simulates the real WhatsApp API message format.
-    """
-    msg_type = request.get("type", "text")
-    caller_id = request.get("from", "Unknown")
-    transcript = None
-    gps_lat = None
-    gps_lng = None
+async def whatsapp_webhook(request: WhatsAppMessage):
+    """Accept a simulated WhatsApp report and its optional shared pin."""
+    transcript = (request.text.body if request.text else "").strip()
+    if request.type == "image":
+        transcript = await image_analysis_agent.describe(transcript or (request.image or {}).get("caption", ""))
+    if len(transcript) < 3:
+        raise HTTPException(status_code=422, detail="Provide an incident description or image caption.")
+    if request.type == "location" and not request.location:
+        raise HTTPException(status_code=422, detail="Location messages require a valid location pin.")
 
-    if msg_type == "text":
-        transcript = request.get("text", {}).get("body", "")
-    elif msg_type == "location":
-        loc = request.get("location", {})
-        gps_lat = loc.get("latitude")
-        gps_lng = loc.get("longitude")
-        # Also grab any accompanying text
-        transcript = request.get("text", {}).get("body", "Emergency reported via WhatsApp live location.")
-    elif msg_type == "image":
-        img_url = request.get("image", {}).get("link", "whatsapp_image")
-        transcript = await image_analysis_agent.describe(img_url)
-
-    if not transcript:
-        raise HTTPException(status_code=400, detail="No usable message content.")
-
-    # Build initial state injection for GPS if available
-    pre_state = {"channel": "whatsapp", "caller_id": caller_id}
-    if gps_lat and gps_lng:
-        pre_state["gps_override"] = {"latitude": gps_lat, "longitude": gps_lng}
-
-    try:
-        result = await supervisor.run(transcript, pre_state=pre_state)
-
-        incident_id = result["incident_id"]
-        short_id = incident_id[:8].upper()
-        eta = (result.get("assigned_resources") or [{}])[0].get("eta_minutes", 6)
-        whatsapp_reply = (
-            f"Your emergency report has been received. "
-            f"AEGIS ID: #INC-{short_id}. "
-            f"Resources dispatched. ETA: {eta} minutes. "
-            f"Reply with your exact location pin if possible."
-        )
-        print(f"[WhatsApp Auto-Reply to {caller_id}]: {whatsapp_reply}")
-
-        result["channel"] = "whatsapp"
-        await publish_result(result)
-        serialized = serialize_incident(result)
-        return {**serialized, "whatsapp_reply": whatsapp_reply}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    result = await supervisor.process_call(
+        transcript, caller_id=request.sender, channel="whatsapp",
+        gps_override=request.location.model_dump() if request.location else None,
+    )
+    incident = await publish_result(result)
+    status = incident["dispatch_status"]
+    if status == "awaiting_location":
+        detail = incident["suggested_callback_script"]
+    elif status in {"assigned", "partially_assigned"}:
+        part = "Some units assigned." if status == "partially_assigned" else "Simulated units assigned."
+        detail = f"{part} First estimated arrival: {incident['eta_minutes']:g} minutes."
+    elif status == "merged_duplicate":
+        detail = f"Linked to report #{incident['duplicate_of'][:8].upper()}."
+    else:
+        detail = f"Current status: {status.replace('_', ' ')}."
+    return {**incident, "whatsapp_reply": f"Simulation report #{incident['incident_id'][:8].upper()}. {detail}"}
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
     try:
+        await websocket.send_json({"type": "snapshot", "payload": {
+            "incidents": list(active_incidents.values()), **await get_resources(),
+            "hospitals": HOSPITALS, "mci": MCI_STATE, "threat_intel": LATEST_THREAT_INTEL,
+        }})
         while True:
             message = await websocket.receive_text()
             if message:
@@ -643,93 +631,51 @@ async def websocket_endpoint(websocket: WebSocket):
 
 @app.post("/api/v1/command")
 async def process_voice_command(request: CommandAgentRequest):
-    recent = list(active_incidents.values())
-    all_assigned = []
-    for inc in recent:
-        all_assigned.extend(inc.get("assigned_resources", []))
-    try:
-        response = await command_agent.process_command(request.command, request.language, recent, all_assigned)
-        return response
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc))
+    return await command_agent.process_command(request.command, request.language, current_incidents(), get_fleet_status())
 
 
 @app.get("/api/v1/report/generate")
 async def generate_aar():
-    recent = list(active_incidents.values())
-    if not recent:
-        raise HTTPException(status_code=400, detail="No incidents to report on. Run a simulation first.")
-    
-    # Cap at 30 most-recent incidents to avoid LLM token limits
-    capped = recent[-30:]
-    try:
-        report = await report_agent.generate_report(capped)
-        if not report:
-            raise HTTPException(
-                status_code=429,
-                detail="LLM rate limit reached or provider unavailable. Please try again in a few minutes."
-            )
-        return report
-    except HTTPException:
-        raise
-    except Exception as exc:
-        err_str = str(exc)
-        if "429" in err_str or "rate_limit" in err_str.lower():
-            raise HTTPException(status_code=429, detail="LLM daily token limit reached. Try again in a few minutes.")
-        raise HTTPException(status_code=500, detail=err_str)
+    recent = db.get_all_incidents(limit=30)
+    report = await report_agent.generate_report(recent)
+    if not report:
+        raise HTTPException(status_code=400, detail="Submit a simulation report first.")
+    return report
 
 @app.post("/api/v1/incidents/{incident_id}/resolve")
 async def resolve_incident(incident_id: str):
-    if incident_id not in active_incidents:
+    incident = active_incidents.get(incident_id)
+    if not incident or incident.get("is_duplicate"):
         raise HTTPException(status_code=404, detail="Incident not found")
-    
-    incident = active_incidents[incident_id]
-    incident["status"] = "RESOLVED"
-    incident["incident_status"] = "RESOLVED"
-    
-    # Release resources in DispatchAgent
+    if incident_id in INCIDENT_UPDATES_IN_PROGRESS:
+        raise HTTPException(status_code=409, detail="Location update is in progress.")
+    if incident["status"] == "RESOLVED":
+        return {"status": "success", "resolved_id": incident_id, "freed": 0}
+
+    now = datetime.now().isoformat()
+    incident = {
+        **incident, "status": "RESOLVED", "incident_status": "RESOLVED",
+        "resolved_at": now, "requires_callback": False,
+        "agent_trail": [*incident.get("agent_trail", []), {
+            "agent": "operator", "timestamp": now, "decision": "Resolved",
+            "reasoning": "Operator closed the simulated incident.",
+        }],
+    }
+    db.save_incident(incident)
+    active_incidents[incident_id] = incident
+    CALLBACK_QUEUE[:] = [entry for entry in CALLBACK_QUEUE if entry["incident_id"] != incident_id]
+    CALLBACK_METRICS["total_pending"] = len(CALLBACK_QUEUE)
+    supervisor.dedup.forget(incident_id)
     released_ids = await supervisor.dispatch.release_resources(incident_id)
-    
-    # Broadcast resolution
+    await manager.broadcast({"type": "incident_update", "payload": incident})
     await manager.broadcast({
         "type": "incident_resolved",
-        "payload": {
-            "incident_id": incident_id,
-            "released_resources": released_ids,
-            "freed_count": len(released_ids)
-        }
+        "payload": {"incident_id": incident_id, "released_resources": released_ids, "freed_count": len(released_ids)},
     })
-    
-    # Also broadcast individual resource updates as 'returning'
-    if released_ids:
-        updates = []
-        for rid in released_ids:
-            updates.append({
-                "id": rid,
-                "status": "returning",
-                "eta_return": random.randint(1, 3) # mock minutes to base
-            })
-        await manager.broadcast({"type": "resource_update", "payload": updates})
-
-    # Update SQLite asynchronously
-    asyncio.create_task(asyncio.to_thread(db.update_incident_status, incident_id, "RESOLVED"))
-
-    # Generate mock outcome data for learning loop
-    import random
-    mock_response_time = random.randint(120, 600)  # seconds
-    mock_golden_hour_met = incident.get("golden_hour_at_risk", False) and mock_response_time < 3600
-    outcome = {
-        "actual_severity": incident.get("priority"),
-        "response_time_seconds": mock_response_time,
-        "golden_hour_met": mock_golden_hour_met,
-        "resource_used_vs_requested": {"matched": True},
-        "outcome": "Resolved successfully"
-    }
-
-    # Trigger FeedbackAgent learning loop in background
-    asyncio.create_task(supervisor.feedback.analyze(incident_id, incident, outcome))
-
+    await broadcast_fleet()
+    await supervisor.feedback.analyze(incident_id, incident, {"outcome": "Closed in simulation"})
     return {"status": "success", "resolved_id": incident_id, "freed": len(released_ids)}
+
 
 @app.get("/api/v1/learning/insights")
 async def get_learning_insights():
@@ -738,9 +684,7 @@ async def get_learning_insights():
 
 @app.post("/api/v1/learning/apply")
 async def apply_learning_rule():
-    # Mock endpoint to apply suggestion
-    await asyncio.to_thread(db.increment_metric, "decisions_improved_by_feedback", 1)
-    return {"status": "success", "message": "Rule applied successfully"}
+    raise HTTPException(status_code=409, detail="Learning suggestions are advisory. Review and update triage rules in the source.")
 
 @app.get("/api/v1/hospitals")
 async def get_hospitals():
@@ -748,22 +692,12 @@ async def get_hospitals():
 
 @app.get("/api/v1/resources")
 async def get_resources():
-    from state.hospitals import get_fleet_status, RESOURCE_DEPOTS
     fleet = get_fleet_status()
-    # Also expose all depot locations for map markers
-    depots = [
-        {
-            "id": d["id"], "name": d["name"], "type": d["type"],
-            "lat": d["lat"], "lng": d["lng"],
-            "resources": d["resources"], "available": d["available"]
-        }
-        for d in RESOURCE_DEPOTS
-    ]
-    return {"resources": fleet, "depots": depots}
+    return {"resources": fleet, "depots": get_depot_status(fleet)}
 
 
 @app.get("/api/v1/incidents/history")
-async def get_incident_history(limit: int = 50):
+async def get_incident_history(limit: int = Query(50, ge=1, le=500)):
     # Run DB fetch in background thread
     history = await asyncio.to_thread(db.get_all_incidents, limit)
     return {"incidents": history}
@@ -782,90 +716,78 @@ async def get_callbacks():
 
 @app.post("/api/v1/callback/{incident_id}/response")
 async def process_callback_response(incident_id: str, request: CallbackResponseRequest):
-    # Find the incident in the queue
-    callback_entry = next((c for c in CALLBACK_QUEUE if c["incident_id"] == incident_id), None)
-    if not callback_entry:
+    entry = next((entry for entry in CALLBACK_QUEUE if entry["incident_id"] == incident_id), None)
+    if not entry:
         raise HTTPException(status_code=404, detail="Incident not found in callback queue")
-    
-    # Combine transcripts
-    combined_transcript = f"{callback_entry['transcript']} [Callback Additions]: {request.additional_info}"
-    
-    try:
-        # Reprocess the call
-        result = await supervisor.process_call(raw_transcript=combined_transcript, caller_id=callback_entry["caller_id"])
-        
-        # Check if it still requires a callback
-        if not result.get("requires_callback"):
-            CALLBACK_QUEUE.remove(callback_entry)
-            CALLBACK_METRICS["total_pending"] -= 1
-            CALLBACK_METRICS["total_resolved"] += 1
-            await manager.broadcast({"type": "callback_resolved", "payload": {"incident_id": incident_id}})
-            result["agent_trail"].append({
-                "agent": "system",
-                "timestamp": datetime.now(),
-                "decision": "Callback Resolution",
-                "reasoning": "Location confirmed via callback — upgrading from PENDING to DISPATCHED"
-            })
-            
-        eta = min((resource["eta_minutes"] for resource in result["assigned_resources"]), default=None)
-        await publish_result(result)
+    if incident_id in INCIDENT_UPDATES_IN_PROGRESS:
+        raise HTTPException(status_code=409, detail="Location update is already in progress.")
+    if not request.location and not request.additional_info.strip():
+        raise HTTPException(status_code=422, detail="Provide a confirmed pin or additional location details.")
 
-        return EmergencyCallResponse(
-            incident_id=result["incident_id"],
-            status="processed",
-            priority=result["priority"],
-            assigned_resources=result["assigned_resources"],
-            eta_minutes=eta,
-            dispatch_status=result["dispatch_status"],
-            incident_status=result.get("incident_status"),
-            location=result.get("location"),
-            incident_type=result.get("incident_type"),
-            requires_callback=result.get("requires_callback"),
-            missing_fields=result.get("missing_fields", []),
-            suggested_callback_script=result.get("suggested_callback_script"),
-            channel=result.get("channel", "voice_call"),
-            agent_trail=result["agent_trail"],
-            golden_hour_deadline=result.get("golden_hour_deadline").isoformat() if result.get("golden_hour_deadline") else None,
-            golden_hour_at_risk=result.get("golden_hour_at_risk"),
-            authenticity_score=int(result.get("confidence_score", 1.0) * 100),
-            joint_dispatch_memo=result.get("joint_dispatch_memo"),
-            agency_timings=result.get("agency_timings"),
+    previous = active_incidents[incident_id]
+    # Prefer the new location statement when the original transcript was ambiguous.
+    transcript = f"{request.additional_info.strip()}\n{entry['transcript']}".strip()
+    pin = {**request.location.model_dump(), "source": "operator_pin"} if request.location else None
+    INCIDENT_UPDATES_IN_PROGRESS.add(incident_id)
+    try:
+        result = await supervisor.process_call(
+            transcript, caller_id=entry["caller_id"], incident_id=incident_id,
+            channel=previous.get("channel", "voice_call"), gps_override=pin,
         )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        result["agent_trail"].append({
+            "agent": "operator", "timestamp": datetime.now(), "decision": "Location follow-up",
+            "reasoning": "Location updated from callback evidence." if not result["requires_callback"]
+                         else "Location still needs confirmation.",
+        })
+        return response_for(await publish_result(result))
+    finally:
+        INCIDENT_UPDATES_IN_PROGRESS.discard(incident_id)
+
+
+@app.post("/api/v1/incidents/{incident_id}/review", response_model=EmergencyCallResponse)
+async def confirm_operator_review(incident_id: str, request: OperatorReviewRequest):
+    incident = active_incidents.get(incident_id)
+    if not incident or incident["status"] == "RESOLVED":
+        raise HTTPException(status_code=404, detail="Incident not found.")
+    if incident["dispatch_status"] != "review_required" or incident_id in INCIDENT_UPDATES_IN_PROGRESS:
+        raise HTTPException(status_code=409, detail="Incident is not awaiting operator review.")
+    location = incident.get("location") or {}
+    if location.get("latitude") is None or location.get("longitude") is None:
+        raise HTTPException(status_code=409, detail="Complete location follow-up first.")
+
+    INCIDENT_UPDATES_IN_PROGRESS.add(incident_id)
+    try:
+        result = await supervisor.process_call(
+            incident["transcript"], incident_id=incident_id, channel=incident.get("channel", "voice_call"),
+            gps_override=location, operator_category=request.category,
+        )
+        result["agent_trail"].insert(0, {
+            "agent": "operator", "timestamp": datetime.now(),
+            "decision": "Confirmed incident category",
+            "reasoning": f"Operator confirmed {request.category.replace('_', ' ')} for simulated dispatch.",
+        })
+        return response_for(await publish_result(result))
+    finally:
+        INCIDENT_UPDATES_IN_PROGRESS.discard(incident_id)
+
 
 if MULTIPART_AVAILABLE:
     @app.post("/api/v1/emergency/audio", response_model=EmergencyCallResponse)
     async def report_emergency_audio(audio: UploadFile = File(...), caller_id: Optional[str] = Form(None)):
-        audio_bytes = await audio.read()
-        filename = audio.filename or "audio.wav"
-        ext = filename.split(".")[-1].lower() if "." in filename else "wav"
-        
+        if not audio_agent.is_loaded:
+            raise HTTPException(status_code=503, detail="Audio transcription requires the optional Whisper model.")
+        audio_bytes = await audio.read(10 * 1024 * 1024 + 1)
+        if len(audio_bytes) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Audio uploads are limited to 10 MB.")
+        ext = (audio.filename or "audio.wav").rsplit(".", 1)[-1].lower()
+        if ext not in {"wav", "mp3", "m4a", "ogg", "webm", "flac", "mp4"}:
+            raise HTTPException(status_code=415, detail="Unsupported audio format.")
         transcription = await asyncio.to_thread(audio_agent.transcribe, audio_bytes, ext)
-        transcript_text = transcription.get("transcript", "")
-        
-        if not transcript_text or transcript_text.startswith("[Transcription Error"):
-            raise HTTPException(status_code=400, detail=f"Failed to transcribe audio: {transcript_text}")
-            
-        try:
-            result = await supervisor.process_call(raw_transcript=transcript_text, caller_id=caller_id)
-            result["audio_source"] = "voice_upload"
-            result["transcription_confidence"] = transcription.get("confidence")
-            
-            eta = min((resource["eta_minutes"] for resource in result["assigned_resources"]), default=None)
-            await publish_result(result)
-
-            return EmergencyCallResponse(
-                incident_id=result["incident_id"],
-                status="processed",
-                priority=result["priority"],
-                assigned_resources=result["assigned_resources"],
-                eta_minutes=eta,
-                dispatch_status=result["dispatch_status"],
-                agent_trail=result["agent_trail"],
-            )
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        transcript = transcription.get("transcript", "")
+        if len(transcript) < 3 or transcript.startswith("[Transcription Error"):
+            raise HTTPException(status_code=422, detail="No usable speech was transcribed.")
+        result = await supervisor.process_call(transcript, caller_id, channel="voice_upload")
+        return response_for(await publish_result(result))
 else:
     @app.post("/api/v1/emergency/audio")
     async def report_emergency_audio_unavailable():
@@ -876,42 +798,16 @@ else:
 
 @app.post("/api/v1/emergency/report", response_model=EmergencyCallResponse)
 async def report_emergency(request: EmergencyCallRequest):
-    # Input validation
-    if not request.transcript or len(request.transcript.strip()) < 3:
-        raise HTTPException(status_code=422, detail="Transcript is too short or empty.")
-    try:
-        result = await supervisor.process_call(raw_transcript=request.transcript, caller_id=request.caller_id)
-        eta = min((resource["eta_minutes"] for resource in result["assigned_resources"]), default=None)
-        await publish_result(result)
-
-        return EmergencyCallResponse(
-            incident_id=result["incident_id"],
-            status="processed",
-            priority=result["priority"],
-            assigned_resources=result["assigned_resources"],
-            eta_minutes=eta,
-            dispatch_status=result["dispatch_status"],
-            incident_status=result.get("incident_status"),
-            location=result.get("location"),
-            incident_type=result.get("incident_type"),
-            requires_callback=result.get("requires_callback"),
-            missing_fields=result.get("missing_fields", []),
-            suggested_callback_script=result.get("suggested_callback_script"),
-            channel=result.get("channel", "voice_call"),
-            agent_trail=result["agent_trail"],
-            golden_hour_deadline=result.get("golden_hour_deadline").isoformat() if result.get("golden_hour_deadline") else None,
-            golden_hour_at_risk=result.get("golden_hour_at_risk"),
-            authenticity_score=int(result.get("confidence_score", 1.0) * 100),
-            joint_dispatch_memo=result.get("joint_dispatch_memo"),
-            agency_timings=result.get("agency_timings"),
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    result = await supervisor.process_call(
+        request.transcript, request.caller_id, channel="sos_portal",
+        gps_override=request.location.model_dump() if request.location else None,
+    )
+    return response_for(await publish_result(result))
 
 
 @app.get("/api/v1/incidents/active")
 async def get_active_incidents():
-    return {"incidents": list(active_incidents.values())}
+    return {"incidents": current_incidents()}
 
 
 @app.post("/api/v1/simulation/run")
@@ -966,7 +862,7 @@ async def run_simulation(scenario: str = "normal", count: int = 5):
 
 async def process_simulated_incident(transcript: str):
     try:
-        result = await supervisor.process_call(transcript)
+        result = await supervisor.process_call(transcript, channel="simulation")
         await publish_result(result)
     except Exception as exc:
         print(f"Simulation error: {exc}")
@@ -986,7 +882,7 @@ async def stop_demo():
     global DEMO_TASK
     if DEMO_TASK:
         DEMO_TASK.cancel()
-        DEMO_TASK = None
+        await asyncio.gather(DEMO_TASK, return_exceptions=True)
     return {"status": "stopped"}
 
 

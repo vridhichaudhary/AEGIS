@@ -1,20 +1,17 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import L from 'leaflet';
-import 'leaflet/dist/leaflet.css';
+import MapView, { isPoint, locationSource } from "../components/MapView";
+import { dispatchLabel } from "../utils/incidentStatus";
 import { getApiBase } from '../utils/runtimeConfig';
-import { Languages, MapPinned, ShieldCheck, Siren, TimerReset } from 'lucide-react';
-
-// Fix Leaflet default icon
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({
-  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-});
+import { MapPinned } from 'lucide-react';
 
 const API_BASE = getApiBase();
 
 const PRIORITY_COLORS = { P1: '#C53030', P2: '#C05621', P3: '#B7791F', P4: '#2F855A', P5: '#718096' };
+const SCENARIOS = [
+  { label: 'Hinglish fire', transcript: 'Aag lagi hai Sector 14 mein! 3 log faase hain.' },
+  { label: 'Unknown location', transcript: 'Heart attack, patient unconscious. Please send help.' },
+  { label: 'Noida address', transcript: 'Two vehicles collided at Sector 18 Noida. A person is unconscious.' },
+];
 const STATUS_STEPS = ['Received', 'Parsing', 'Triaged', 'Dispatched'];
 
 const generateCallerId = () => `+91-112-${Math.floor(10000000 + Math.random() * 90000000)}`;
@@ -23,7 +20,7 @@ const deriveStatusStep = (incident) => {
   if (!incident) return null;
 
   const dispatchStatus = incident.dispatch_status;
-  if (dispatchStatus === 'assigned' || incident.incident_status === 'DISPATCHED') {
+  if (['assigned', 'partially_assigned'].includes(dispatchStatus) || incident.incident_status === 'DISPATCHED') {
     return 'Dispatched';
   }
 
@@ -39,129 +36,6 @@ const deriveStatusStep = (incident) => {
   }
 
   return 'Parsing';
-};
-
-// ─── Haversine Distance ────────────────────────────────────────────────────────
-const haversineDistance = (lat1, lon1, lat2, lon2) => {
-  const R = 6371;
-  const dLat = (lat2 - lat1) * Math.PI / 180;
-  const dLon = (lon2 - lon1) * Math.PI / 180;
-  const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-    Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-  return R * c;
-};
-
-// ─── Small Incident Map ───────────────────────────────────────────────────────
-const IncidentMiniMap = ({ incident, depots = [] }) => {
-  const mapRef = useRef(null);
-  const mapInstance = useRef(null);
-  const incidentMarkerRef = useRef(null);
-  const depotMarkersRef = useRef([]);
-  const vectorRef = useRef([]);
-
-  useEffect(() => {
-    if (!mapRef.current) return;
-    if (!mapInstance.current) {
-      mapInstance.current = L.map(mapRef.current, {
-        zoomControl: true,
-        attributionControl: false,
-      }).setView([28.6139, 77.2090], 12);
-
-      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 18,
-      }).addTo(mapInstance.current);
-    }
-
-    if (incident?.location?.latitude) {
-      const lat = incident.location.latitude;
-      const lng = incident.location.longitude;
-      const incPos = [lat, lng];
-
-      if (incidentMarkerRef.current) {
-        mapInstance.current.removeLayer(incidentMarkerRef.current);
-      }
-
-      const color = PRIORITY_COLORS[incident.priority] || '#C53030';
-      const html = `<div style="background:${color};width:22px;height:22px;border-radius:50%;border:4px solid white;box-shadow:0 4px 12px rgba(0,0,0,0.4);animation:pulse-ring 1.5s infinite;"></div>`;
-      const icon = L.divIcon({ className: '', html, iconSize: [22, 22], iconAnchor: [11, 11] });
-      incidentMarkerRef.current = L.marker(incPos, { icon }).addTo(mapInstance.current);
-      
-      // Clear old vectors and markers
-      vectorRef.current.forEach(v => mapInstance.current.removeLayer(v));
-      vectorRef.current = [];
-      depotMarkersRef.current.forEach(m => mapInstance.current.removeLayer(m));
-      depotMarkersRef.current = [];
-
-  // Find top 3 nearest — prefer category-relevant depot types
-      const cat = incident?.incident_type?.category || 'other';
-      const typePreference = {
-        'accident': ['ambulance', 'police', 'fire'],
-        'medical':  ['ambulance', 'police', 'fire'],
-        'fire':     ['fire', 'ambulance', 'rescue'],
-        'violence': ['police', 'ambulance', 'fire'],
-        'natural_disaster': ['rescue', 'ambulance', 'fire'],
-      };
-      const preferred = typePreference[cat] || ['ambulance', 'police', 'fire'];
-
-      const nearby = depots.map(d => ({
-          ...d,
-          dist: haversineDistance(lat, lng, d.lat, d.lng),
-          typeOrder: preferred.indexOf(d.type) >= 0 ? preferred.indexOf(d.type) : 99,
-      })).sort((a, b) => a.typeOrder !== b.typeOrder ? a.typeOrder - b.typeOrder : a.dist - b.dist).slice(0, 3);
-
-      nearby.forEach(depot => {
-          const emoji = depot.type === 'fire' ? '🚒' : depot.type === 'police' ? '👮' : '🏥';
-          const dColor = depot.type === 'fire' ? '#C05621' : depot.type === 'police' ? '#553C9A' : '#2B6CB0';
-          
-          const dHtml = `<div style="background:white;width:30px;height:30px;border-radius:50%;border:2px solid ${dColor};display:flex;align-items:center;justify-content:center;font-size:16px;box-shadow:0 2px 8px rgba(0,0,0,0.2);">${emoji}</div>`;
-          const dIcon = L.divIcon({ className: '', html: dHtml, iconSize: [30, 30], iconAnchor: [15, 15] });
-          const m = L.marker([depot.lat, depot.lng], { icon: dIcon }).addTo(mapInstance.current);
-          depotMarkersRef.current.push(m);
-
-          // Draw vector line with arrowhead
-          const poly = L.polyline([[depot.lat, depot.lng], incPos], {
-              color: dColor,
-              weight: 2,
-              dashArray: '5, 8',
-              opacity: 0.6,
-              className: 'tactical-vector'
-          }).addTo(mapInstance.current);
-          vectorRef.current.push(poly);
-
-          // Add a small arrowhead at the incident end
-          const arrowHtml = `<div style="color:${dColor}; font-size:12px; transform: rotate(${getAngle([depot.lat, depot.lng], incPos)}deg);">➤</div>`;
-          const arrowIcon = L.divIcon({ className: '', html: arrowHtml, iconSize: [12, 12], iconAnchor: [6, 6] });
-          const arrowMarker = L.marker(incPos, { icon: arrowIcon, zIndexOffset: -10 }).addTo(mapInstance.current);
-          vectorRef.current.push(arrowMarker);
-      });
-
-      mapInstance.current.flyTo(incPos, 14, { animate: true, duration: 1 });
-    }
-  }, [incident, depots]);
-
-  // Helper to get angle for arrowhead
-  const getAngle = (start, end) => {
-    const dy = end[0] - start[0];
-    const dx = end[1] - start[1];
-    return Math.atan2(dy, dx) * 180 / Math.PI + 90;
-  };
-
-  useEffect(() => {
-    return () => {
-      if (mapInstance.current) {
-        mapInstance.current.remove();
-        mapInstance.current = null;
-      }
-    };
-  }, []);
-
-  return (
-    <div style={{ height: '280px', width: '100%', borderRadius: '16px', overflow: 'hidden', border: '1px solid #E2E8F0' }}>
-      <div ref={mapRef} style={{ height: '100%', width: '100%' }} />
-    </div>
-  );
 };
 
 // ─── Status Track ─────────────────────────────────────────────────────────────
@@ -192,91 +66,24 @@ const StatusTrack = ({ status }) => {
   );
 };
 
-// ─── Response Metrics ─────────────────────────────────────────────────────────
-const ResponseMetrics = ({ closest }) => {
-    if (!closest) return null;
-    const { depot, distance, eta } = closest;
-    const emoji = depot.type === 'fire' ? '🚒' : depot.type === 'police' ? '👮' : '🏥';
-    
-    return (
-        <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 flex items-center gap-4 animate-slide-up mb-6">
-            <div className="w-14 h-14 bg-white rounded-xl shadow-sm flex items-center justify-center text-2xl border border-blue-200">
-                {emoji}
-            </div>
-            <div className="flex-1">
-                <div className="text-[10px] font-black text-blue-400 uppercase tracking-widest mb-1">Closest Responder</div>
-                <div className="text-sm font-bold text-slate-800">{depot.name}</div>
-                <div className="flex items-center gap-3 mt-1 text-xs text-slate-600">
-                    <span className="flex items-center gap-1">📍 <strong>{distance.toFixed(1)} km</strong></span>
-                    <span className="flex items-center gap-1">⏱️ <strong>{eta.toFixed(0)} mins</strong></span>
-                </div>
-            </div>
-            <div className="flex flex-col items-end">
-                <div className="px-3 py-1 bg-blue-600 text-white text-[10px] font-black rounded-full shadow-lg shadow-blue-200">EN ROUTE</div>
-            </div>
-        </div>
-    );
-};
-
-// ─── Nearby Station Row ───────────────────────────────────────────────────────
-const NearbyStationRow = ({ depot, distance, eta }) => {
-  const emoji = depot.type === 'fire' ? '🚒' : depot.type === 'police' ? '👮' : '🏥';
-  const color = depot.type === 'fire' ? '#C05621' : depot.type === 'police' ? '#553C9A' : '#2B6CB0';
-  
-  return (
-    <div className="flex items-center gap-4 p-4 border-b border-slate-50 last:border-0 hover:bg-slate-50 transition-colors">
-      <div className="w-12 h-12 rounded-xl flex items-center justify-center text-xl shadow-sm" style={{ backgroundColor: `${color}10`, color, border: `1px solid ${color}20` }}>
-        {emoji}
-      </div>
-      <div className="flex-1 min-w-0">
-        <div className="text-[10px] font-black uppercase tracking-wider opacity-60" style={{ color }}>{depot.type} STATION</div>
-        <div className="text-sm font-bold text-slate-800 truncate">{depot.name}</div>
-        <div className="text-[11px] text-slate-500 mt-0.5">
-          {distance.toFixed(1)} km away • Response: <span className="font-bold text-slate-700">{eta.toFixed(0)} mins</span>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ─── Main Citizen Panel ───────────────────────────────────────────────────────
-const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
+const CitizenPanel = ({ latestCitizenIncident, onReport }) => {
   const [text, setText] = useState('');
   const [callerId] = useState(generateCallerId);
   const [submitting, setSubmitting] = useState(false);
-  const [statusStep, setStatusStep] = useState(null);
-  const [incident, setIncident] = useState(null);
   const [listening, setListening] = useState(false);
+  const [voiceLanguage, setVoiceLanguage] = useState('en-IN');
+  const [location, setLocation] = useState(null);
+  const [error, setError] = useState('');
   const recognitionRef = useRef(null);
+  const incident = latestCitizenIncident;
+  const statusStep = submitting ? 'Parsing' : deriveStatusStep(incident);
 
-  useEffect(() => {
-    if (latestCitizenIncident) {
-      setIncident(latestCitizenIncident);
-      setStatusStep(deriveStatusStep(latestCitizenIncident));
-    }
-  }, [latestCitizenIncident]);
-
-  // Sort by incident-category relevance first, then by distance
-  const getTypeOrder = (type, cat) => {
-    const pref = { accident: ['ambulance','police','fire'], medical: ['ambulance','police','fire'],
-      fire: ['fire','ambulance','rescue'], violence: ['police','ambulance','fire'],
-      natural_disaster: ['rescue','ambulance','fire'] };
-    const order = pref[cat] || ['ambulance','police','fire'];
-    const idx = order.indexOf(type);
-    return idx >= 0 ? idx : 99;
-  };
-  const incidentCat = incident?.incident_type?.category || 'other';
-  const nearbyStations = incident?.location?.latitude ? allDepots.map(d => {
-    const dist = haversineDistance(incident.location.latitude, incident.location.longitude, d.lat, d.lng);
-    const speed = d.type === 'police' ? 45 : d.type === 'fire' ? 35 : 40;
-    const eta = (dist / speed) * 60;
-    return { depot: d, distance: dist, eta, typeOrder: getTypeOrder(d.type, incidentCat) };
-  }).sort((a, b) => a.typeOrder !== b.typeOrder ? a.typeOrder - b.typeOrder : a.distance - b.distance).slice(0, 3) : [];
+  useEffect(() => () => recognitionRef.current?.abort(), []);
 
   const startVoice = useCallback(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) {
-      alert('Voice input not supported in this browser.');
+      setError('Voice input is unavailable in this browser. You can type your report.');
       return;
     }
     if (listening) {
@@ -286,7 +93,7 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
     }
     const recognition = new SpeechRecognition();
     recognitionRef.current = recognition;
-    recognition.lang = 'hi-IN';
+    recognition.lang = voiceLanguage;
     recognition.interimResults = true;
     recognition.continuous = false;
 
@@ -296,33 +103,33 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
       setText(transcript);
     };
     recognition.onend = () => setListening(false);
-    recognition.onerror = () => setListening(false);
+    recognition.onerror = () => {
+      setListening(false);
+      setError("Voice input was interrupted. You can type your report.");
+    };
     recognition.start();
-  }, [listening]);
+  }, [listening, voiceLanguage]);
 
   const handleSubmit = async (transcript = text) => {
     if (!transcript.trim() || submitting) return;
     setSubmitting(true);
-    setStatusStep('Received');
-    setIncident(null);
+    setError('');
 
     try {
-      setStatusStep('Parsing');
-
       const res = await fetch(`${API_BASE}/api/v1/emergency/report`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transcript, caller_id: callerId }),
+        body: JSON.stringify({ transcript, caller_id: callerId, location }),
       });
 
-      if (!res.ok) throw new Error('Backend error');
+      if (!res.ok) throw new Error('Could not submit the report. Try again in a moment.');
       const data = await res.json();
-      setIncident(data);
-      setStatusStep(deriveStatusStep(data));
+      onReport(data);
+      setLocation(null);
       setText('');
     } catch (e) {
       console.error('SOS submit failed:', e);
-      setStatusStep(null);
+      setError(e.message);
     } finally {
       setSubmitting(false);
     }
@@ -339,27 +146,19 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
           <div>
             <div className="citizen-eyebrow">Emergency Intake Interface</div>
             <h1 className="citizen-title">Citizen SOS Portal</h1>
-            <p className="citizen-subtitle">Designed for rapid, multilingual reporting with live dispatch visibility and secure escalation.</p>
+            <p className="citizen-subtitle">Practice reporting an incident in English, Hindi, or Hinglish.</p>
           </div>
         </div>
         <div className="citizen-caller-info">
-          <div className="citizen-caller-label">Secure Session ID</div>
+          <div className="citizen-caller-label">Exercise session</div>
           <div className="citizen-caller-id">{callerId}</div>
         </div>
       </div>
 
       <div className="citizen-trust-row">
         <div className="citizen-trust-chip">
-          <Languages size={14} />
-          Hindi, Hinglish, English
-        </div>
-        <div className="citizen-trust-chip">
           <MapPinned size={14} />
           Assisted location capture
-        </div>
-        <div className="citizen-trust-chip">
-          <ShieldCheck size={14} />
-          Protected emergency channel
         </div>
       </div>
 
@@ -371,9 +170,9 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
                 <div className="sos-input-kicker">Immediate reporting</div>
                 <h2 className="sos-input-heading">Report an emergency in one step</h2>
               </div>
-              <div className="sos-mode-pill">Live triage</div>
+              <div className="sos-mode-pill">Simulation</div>
             </div>
-            <p className="sos-input-sub">Describe what is happening, where you are, and who is affected. The same backend flow continues to parse, validate, triage, and dispatch without changing your current system logic.</p>
+            <p className="sos-input-sub">Describe what is happening, where you are, and who is affected.</p>
             
             <button
               className={`sos-voice-btn-large ${listening ? 'listening' : ''}`}
@@ -392,6 +191,12 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
             <div className="sos-divider"><span>OR</span></div>
 
             <div className="sos-text-area-wrapper">
+              <div className="flex flex-wrap gap-2 mb-2" aria-label="Sample reports">
+                {SCENARIOS.map(scenario => (
+                  <button key={scenario.label} className="rounded border bg-white px-2 py-1 text-xs"
+                    disabled={submitting} onClick={() => { setText(scenario.transcript); setLocation(null); }}>{scenario.label}</button>
+                ))}
+              </div>
               <textarea
                 className="sos-textarea-premium"
                 placeholder="What is happening? Tell us location and situation..."
@@ -399,25 +204,35 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
                 onChange={e => setText(e.target.value)}
                 disabled={submitting}
                 rows={3}
+                maxLength={4000}
               />
               <button
                 className="sos-submit-btn-premium"
                 onClick={() => handleSubmit()}
-                disabled={!text.trim() || submitting}
+                disabled={text.trim().length < 3 || submitting}
               >
                 {submitting ? (
                   <span className="flex items-center gap-2">
                     <span className="spinner-small" /> PROCESSING...
                   </span>
                 ) : (
-                  'INITIATE EMERGENCY RESPONSE'
+                  'Submit simulation report'
                 )}
               </button>
             </div>
 
-            <div className="sos-security-note">
-              🔒 End-to-end encrypted connection to Emergency Command
+            <div className="flex flex-wrap items-center gap-3 mt-4 text-sm">
+              <label className="flex items-center gap-2">Voice language
+                <select className="rounded border px-2 py-1" value={voiceLanguage} onChange={event => setVoiceLanguage(event.target.value)} disabled={listening}>
+                  <option value="en-IN">English</option><option value="hi-IN">Hindi</option>
+                </select>
+              </label>
+              <button type="button" className="rounded border bg-white px-3 py-1" onClick={() => setLocation(location ? null : { latitude: 28.6304, longitude: 77.2177 })} disabled={submitting}>
+                {location ? 'Remove demo pin' : 'Attach demo location pin'}
+              </button>
             </div>
+            {location && <p className="mt-2 text-xs">Pin attached · {location.latitude.toFixed(5)}, {location.longitude.toFixed(5)}</p>}
+            {error && <p className="mt-3 text-sm text-red-700" role="alert">{error}</p>}
           </div>
         </div>
 
@@ -439,69 +254,44 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
                 <div className="px-4 pb-6">
                     <StatusTrack status={statusStep} />
                 </div>
-                {nearbyStations.length > 0 && (
-                    <div className="px-4 pb-4">
-                        <ResponseMetrics closest={nearbyStations[0]} />
-                    </div>
-                )}
+                {incident && <div className="px-4 pb-4 text-sm text-slate-700" role="status">
+                  <strong>{incident.status === 'RESOLVED' ? 'Resolved' : dispatchLabel(incident.dispatch_status)}</strong>
+                  <span className="ml-2 font-mono text-xs">#{incident.incident_id.slice(0, 8).toUpperCase()}</span>
+                  {incident.requires_callback && <p className="mt-1">{incident.suggested_callback_script}</p>}
+                </div>}
               </div>
 
-              <div className="sos-card card-premium mb-6 overflow-hidden">
-                <div className="sos-card-header p-4 bg-slate-50/50 border-b border-slate-100">
-                  <div>
-                    <div className="sos-card-kicker">Field visibility</div>
-                    <h3 className="sos-card-title">Tactical deployment map</h3>
+              {isPoint(incident?.location?.latitude, incident?.location?.longitude) && (
+                <div className="sos-card card-premium mb-6 overflow-hidden">
+                  <div className="sos-card-header p-4">
+                    <h3 className="sos-card-title">Incident map</h3>
+                    <span className="sos-location-badge">{locationSource(incident.location.source)}</span>
                   </div>
-                  <span className="sos-location-badge bg-white shadow-sm">{incident?.location?.raw_text || 'Detecting Location...'}</span>
-                </div>
-                <div className="p-2">
-                    <IncidentMiniMap incident={incident} depots={allDepots} />
-                </div>
-              </div>
-
-              {nearbyStations.length > 0 && (
-                <div className="sos-card card-premium mb-6">
-                   <div className="sos-card-header p-4 border-b border-slate-100 bg-slate-50/50">
-                     <div>
-                       <div className="sos-card-kicker">Nearest support</div>
-                       <h3 className="sos-card-title">Nearby response centers</h3>
-                     </div>
-                   </div>
-                   <div className="p-0">
-                     {nearbyStations.map((ns, idx) => (
-                       <NearbyStationRow key={idx} {...ns} />
-                     ))}
-                   </div>
+                  <div className="p-2"><MapView incidents={[incident]} compact /></div>
                 </div>
               )}
 
-              {incident?.assigned_resources?.length > 0 ? (
+              {incident?.status !== 'RESOLVED' && incident?.assigned_resources?.length > 0 ? (
                 <div className="sos-card card-premium animate-slide-up border-t-4 border-green-500">
                   <div className="dispatch-confirmed-header">
                     <div>
                       <div className="sos-card-kicker">Unit mobilization</div>
-                      <h3 className="sos-card-title text-green-900">Dispatch confirmed</h3>
+                      <h3 className="sos-card-title text-green-900">Simulated dispatch</h3>
                     </div>
-                    <span className="dispatch-confirmed-chip">Units en route</span>
+                    <span className="dispatch-confirmed-chip">Units assigned</span>
                   </div>
                   <div className="sos-resources-list">
                     {incident.assigned_resources.map((r, i) => (
                       <div key={i} className="flex items-center gap-4 p-4 border-b border-slate-50 last:border-0">
-                        <div className="text-2xl">🚑</div>
+                        <div className="text-2xl">{r.resource_type.startsWith('fire') ? '🚒' : r.resource_type.startsWith('ambulance') ? '🚑' : '🚓'}</div>
                         <div className="flex-1">
                              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{r.resource_type.replace('_', ' ')}</div>
                              <div className="text-sm font-bold text-slate-800">Unit #{r.resource_id} dispatched from {r.depot_name || 'Central Base'}</div>
-                             <div className="text-[11px] text-green-600 font-bold mt-1">Status: EN ROUTE (ETA: {r.eta_minutes || '~5'} mins)</div>
+                             <div className="text-[11px] text-green-600 font-bold mt-1">Estimated arrival · {r.eta_minutes} min ({r.route_source === 'osrm' ? 'road route' : 'straight line'})</div>
                         </div>
                       </div>
                     ))}
                   </div>
-                </div>
-              ) : statusStep === 'Dispatched' ? (
-                <div className="sos-card card-premium p-10 text-center border-dashed border-2 border-slate-200">
-                  <div className="spinner-large mx-auto mb-4" />
-                  <p className="font-bold text-slate-600">Coordinating nearest units...</p>
-                  <p className="text-xs text-slate-400 mt-2">AI Agents are securing the closest hospital and rescue fleet.</p>
                 </div>
               ) : null}
             </div>
@@ -515,39 +305,8 @@ const CitizenPanel = ({ latestCitizenIncident, allDepots = [] }) => {
                   <div className="idle-icon">🛡️</div>
                 </div>
                 <div className="citizen-idle-copy">
-                  <div className="idle-kicker">Standby network</div>
-                  <h2 className="idle-title">Delhi NCR Response Network</h2>
-                  <p className="idle-desc">AEGIS AI agents stay ready for voice or typed emergency intake, duplicate detection, severity understanding, and safer dispatch coordination across the region.</p>
-                </div>
-
-                <div className="idle-feature-list">
-                  <div className="idle-feature-item">
-                    <Languages size={16} />
-                    <span>Understands Hindi, Hinglish, and English distress descriptions</span>
-                  </div>
-                  <div className="idle-feature-item">
-                    <Siren size={16} />
-                    <span>Escalates life-critical incidents with transparent triage stages</span>
-                  </div>
-                  <div className="idle-feature-item">
-                    <TimerReset size={16} />
-                    <span>Guides the caller while operators and nearest units are mobilized</span>
-                  </div>
-                </div>
-              </div>
-              
-              <div className="idle-stats">
-                <div className="idle-stat">
-                  <div className="stat-value">25+</div>
-                  <div className="stat-label">Smart Bases</div>
-                </div>
-                <div className="idle-stat">
-                  <div className="stat-value">&lt;3s</div>
-                  <div className="stat-label">Response Time</div>
-                </div>
-                <div className="idle-stat">
-                  <div className="stat-value">100%</div>
-                  <div className="stat-label">Live Support</div>
+                  <h2 className="idle-title">Ready for a report</h2>
+                  <p className="idle-desc">Submit a sample to see how the simulator classifies the incident, verifies its location, and assigns available units.</p>
                 </div>
               </div>
             </div>

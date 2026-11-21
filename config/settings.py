@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     PORTAL_WS_URL: Optional[str] = None
 
     USE_MOCK_ROUTING: bool = True
+    OSRM_BASE_URL: str = "https://router.project-osrm.org"
     ENABLE_SEMANTIC_EMBEDDINGS: bool = False
     LLM_TIMEOUT_SECONDS: float = 8.0
 

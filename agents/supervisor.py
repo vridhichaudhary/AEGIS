@@ -50,9 +50,14 @@ class SupervisorAgent:
         workflow.add_edge("feedback", END)
         return workflow.compile()
 
-    async def process_call(self, raw_transcript: str, caller_id: str = None) -> dict:
+    async def process_call(self, raw_transcript: str, caller_id: str = None, *, incident_id: str = None,
+                           channel: str = "voice_call", gps_override: dict = None,
+                           operator_category: str = None) -> dict:
         initial_state = {
-            "incident_id": str(uuid.uuid4()),
+            "incident_id": incident_id or str(uuid.uuid4()),
+            "channel": channel,
+            "gps_override": gps_override,
+            "operator_category": operator_category,
             "raw_transcript": raw_transcript,
             "audio_data": None,
             "timestamp": datetime.now(),
@@ -83,7 +88,7 @@ class SupervisorAgent:
             "dispatch_timestamp": None,
             "agent_trail": [],
             "errors": [],
-            "human_override": False,
+            "human_override": bool(operator_category),
             "actual_severity": None,
             "response_time_seconds": None,
             "outcome": None,
@@ -92,27 +97,25 @@ class SupervisorAgent:
 
         try:
             if self.graph is not None:
-                return await self.graph.ainvoke(initial_state)
-            return await self.run_sequential(initial_state)
+                result = await self.graph.ainvoke(initial_state)
+            else:
+                result = await self.run_sequential(initial_state)
+            if result["dispatch_status"] in {"review_required", "not_required", "awaiting_location"}:
+                self.dedup.forget(initial_state["incident_id"])
+            return result
         except Exception as exc:
+            await self.dispatch.release_resources(initial_state["incident_id"])
+            self.dedup.forget(initial_state["incident_id"])
             initial_state["errors"].append(f"Graph execution failed: {exc}")
             return initial_state
 
     async def run(self, raw_transcript: str, pre_state: dict = None) -> dict:
         """Entry point that supports pre-state overrides (e.g., from WhatsApp webhook)."""
-        caller_id = (pre_state or {}).get("caller_id")
-        result = await self.process_call(raw_transcript, caller_id=caller_id)
-        # Inject extra fields from pre_state (channel, gps_override, etc.)
-        if pre_state:
-            for k, v in pre_state.items():
-                if k not in ("caller_id",):
-                    result[k] = v
-            # Apply GPS override into location if present
-            if "gps_override" in pre_state and result.get("location") is not None:
-                result["location"]["latitude"] = pre_state["gps_override"]["latitude"]
-                result["location"]["longitude"] = pre_state["gps_override"]["longitude"]
-                result["location"]["gps_accurate"] = True
-        return result
+        inputs = pre_state or {}
+        return await self.process_call(
+            raw_transcript, caller_id=inputs.get("caller_id"),
+            channel=inputs.get("channel", "voice_call"), gps_override=inputs.get("gps_override"),
+        )
 
     async def run_sequential(self, state: dict) -> dict:
         state = await self.ingestion.process(state)

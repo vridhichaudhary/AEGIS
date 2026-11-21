@@ -1,4 +1,5 @@
 import json
+import re
 import asyncio
 from datetime import datetime
 from typing import List, Literal, Tuple
@@ -9,7 +10,7 @@ from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
 
 class ValidationResult(BaseModel):
-    authenticity_score: int = Field(description="Authenticity score from 0 to 100")
+    authenticity_score: int = Field(ge=0, le=100, description="Authenticity score from 0 to 100")
     reasoning: List[str] = Field(description="3-5 bullet points explaining your conclusion")
     recommended_action: Literal["DISPATCH", "HOLD", "INVESTIGATE", "REVIEW"] = Field(description="Recommended action based on score")
     confidence: Literal["HIGH", "MEDIUM", "LOW"] = Field(description="Confidence in your assessment")
@@ -59,7 +60,7 @@ class ValidationAgent(BaseAgent):
             reasons.append("Excessive punctuation pattern")
             
         hoax_terms = ['haha', 'lol', 'fake', 'prank', 'testing', 'mazak', 'masti']
-        if any(word in lowered for word in hoax_terms):
+        if any(re.search(rf"\b{word}\b", lowered) for word in hoax_terms):
             score -= 40
             reasons.append("Hoax language detected")
             
@@ -74,7 +75,8 @@ class ValidationAgent(BaseAgent):
         validation_method = "llm"
         
         transcript = state.get('raw_transcript', state.get('normalized_text', ''))
-        location_text = state.get('location', {}).get('raw_text', 'Unknown')
+        location = state.get('location') or {}
+        location_text = location.get('raw_text', '') if location.get('latitude') is not None else ''
         victim_count = state.get('victim_count', 1)
 
         if self.llm_available and HumanMessage is not None:
@@ -99,7 +101,7 @@ Victim Count: {victim_count}
                     self.invoke_llm([HumanMessage(content=prompt)]),
                     timeout=8.0
                 )
-                validation_data = self.parser.parse(response.content)
+                validation_data = ValidationResult.model_validate(self.parser.parse(response.content)).model_dump()
             except asyncio.TimeoutError:
                 state["errors"].append("Validation LLM timed out (8s). Using rule-based fallback.")
             except Exception as exc:
@@ -133,9 +135,12 @@ Victim Count: {victim_count}
         if score < 45:
             validation_data["recommended_action"] = "REVIEW"
         
-        requires_callback = score < 45
-        flags = state.get("validation_flags", [])
-        if requires_callback:
+        review_required = validation_data.get("recommended_action") in {"REVIEW", "HOLD"}
+        rule_score, rule_reasons = self.rule_based_authenticity(transcript, location_text, victim_count)
+        flags = list(state.get("validation_flags", []))
+        if rule_score < 45 and "Hoax language detected" in rule_reasons:
+            flags.append("possible_prank")
+        if review_required:
             if "review_required" not in flags:
                 flags.append("review_required")
 
@@ -153,5 +158,4 @@ Victim Count: {victim_count}
             **state,
             "confidence_score": final_score,
             "validation_flags": flags,
-            "requires_callback": requires_callback,
         }

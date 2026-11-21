@@ -7,6 +7,8 @@ const VoiceCommand = ({ onGlow }) => {
   const [language, setLanguage] = useState('en-US');
   const [voiceLog, setVoiceLog] = useState([]);
   const [isOpen, setIsOpen] = useState(false);
+  const [typed, setTyped] = useState("");
+  const canSpeak = Boolean(window.SpeechRecognition || window.webkitSpeechRecognition);
   
   const recognitionRef = useRef(null);
 
@@ -44,12 +46,14 @@ const VoiceCommand = ({ onGlow }) => {
     if (isListening) {
       recognitionRef.current?.stop();
     } else {
+      if (!recognitionRef.current) return;
       recognitionRef.current.lang = language;
       recognitionRef.current?.start();
     }
   };
 
   const handleCommand = async (transcript) => {
+    setIsOpen(true);
     // Add to log as user
     setVoiceLog(prev => [{ speaker: 'user', text: transcript }, ...prev].slice(0, 5));
     
@@ -61,24 +65,25 @@ const VoiceCommand = ({ onGlow }) => {
         body: JSON.stringify({ command: transcript, language })
       });
       
+      if (!response.ok) throw new Error("Command request failed.");
       const data = await response.json();
       const spokenResponse = data.spoken_response;
       
       setVoiceLog(prev => [{ speaker: 'agent', text: spokenResponse }, ...prev].slice(0, 5));
       speak(spokenResponse, language);
     } catch (error) {
-      console.error("Failed to process command:", error);
+      setVoiceLog(prev => [{ speaker: "agent", text: error.message }, ...prev].slice(0, 5));
     }
   };
 
   const speak = (text, lang) => {
     if ('speechSynthesis' in window) {
-      onGlow(true);
+      onGlow?.(true);
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = lang;
       
-      utterance.onend = () => onGlow(false);
-      utterance.onerror = () => onGlow(false);
+      utterance.onend = () => onGlow?.(false);
+      utterance.onerror = () => onGlow?.(false);
       
       window.speechSynthesis.speak(utterance);
     }
@@ -88,6 +93,7 @@ const VoiceCommand = ({ onGlow }) => {
     <div className="relative flex items-center gap-3 ml-4">
       <button 
         onClick={() => setIsOpen(!isOpen)}
+        aria-label="Open dispatcher commands"
         className="text-gray-400 hover:text-white transition-colors relative"
       >
         <MessageSquare size={18} />
@@ -105,6 +111,8 @@ const VoiceCommand = ({ onGlow }) => {
 
       <button
         onClick={toggleListening}
+        disabled={!canSpeak}
+        aria-label="Voice command"
         className={`w-10 h-10 rounded-full flex items-center justify-center transition-all shadow-lg border ${
           isListening 
             ? 'bg-red-500/20 text-red-400 border-red-500/50 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.4)]' 
@@ -116,7 +124,14 @@ const VoiceCommand = ({ onGlow }) => {
 
       {/* Voice Log Dropdown */}
       {isOpen && (
-        <div className="absolute top-12 right-0 w-72 bg-[#0A1118] border border-blue-500/30 rounded-lg shadow-2xl p-3 z-50 animate-fade-in">
+        <div className="absolute top-12 left-0 w-72 bg-[#0A1118] border border-blue-500/30 rounded-lg shadow-2xl p-3 z-50 animate-fade-in">
+          <form className="mb-2 flex gap-1" onSubmit={event => {
+            event.preventDefault();
+            if (typed.trim()) { handleCommand(typed.trim()); setTyped(""); }
+          }}>
+            <input className="w-full rounded bg-white p-1 text-xs text-slate-900" aria-label="Dispatcher command" placeholder="How many P1 cases?" value={typed} onChange={event => setTyped(event.target.value)} maxLength={500} />
+            <button className="rounded bg-white px-2 text-xs text-slate-900">Ask</button>
+          </form>
           <h3 className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 border-b border-gray-800 pb-2">Voice Command Log</h3>
           <div className="space-y-3 max-h-64 overflow-y-auto custom-scrollbar">
             {voiceLog.length === 0 ? (

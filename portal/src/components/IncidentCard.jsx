@@ -1,5 +1,6 @@
+import { dispatchLabel } from '../utils/incidentStatus';
 import React, { useState, useEffect } from 'react';
-import { Clock, MapPin, CheckCircle2, Copy, Trash2, MoreHorizontal } from 'lucide-react';
+import { MapPin, CheckCircle2, MoreHorizontal } from 'lucide-react';
 
 const CategoryIcon = ({ category }) => {
   const cat = (category || 'emergency').toLowerCase();
@@ -17,7 +18,7 @@ const ResourceIcon = ({ type }) => {
   return <div className="res-shape bg-aegis-info" />;
 };
 
-const IncidentCard = ({ incident, onClick, onResolve, onAddNote, mViewTimeline, isMci }) => {
+const IncidentCard = ({ incident, onClick, onResolve, isMci }) => {
   const [timeLeft, setTimeLeft] = useState(null);
   const [isNew, setIsNew] = useState(true);
   const [contextMenu, setContextMenu] = useState(null);
@@ -53,7 +54,7 @@ const IncidentCard = ({ incident, onClick, onResolve, onAddNote, mViewTimeline, 
 
   const isCritical = incident.priority === 'P1' || incident.priority === 'P2';
   const isDuplicate = incident.dispatch_status === 'merged_duplicate';
-  const isResolved = incident.incident_status === 'RESOLVED';
+  const isResolved = incident.status === 'RESOLVED';
 
   return (
     <>
@@ -66,7 +67,10 @@ const IncidentCard = ({ incident, onClick, onResolve, onAddNote, mViewTimeline, 
         style={{
           borderLeft: `${isMci ? '8px' : '4px'} solid ${isCritical ? '#C53030' : '#B7791F'}`,
         }}
-        onClick={() => !isResolved && onClick(incident)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onClick(incident); } }}
+        onClick={() => onClick(incident)}
         onContextMenu={handleContextMenu}
       >
         {/* TOP ROW */}
@@ -134,11 +138,11 @@ const IncidentCard = ({ incident, onClick, onResolve, onAddNote, mViewTimeline, 
             {(incident.assigned_resources?.length || 0) > 3 && (
               <span className="text-[10px] text-slate-400 font-bold">+{incident.assigned_resources.length - 3}</span>
             )}
-            {!incident.assigned_resources?.length && <span className="text-[10px] text-slate-400 italic">Deploying...</span>}
+            {!incident.assigned_resources?.length && <span className="text-[10px] text-slate-400 italic">{dispatchLabel(incident.dispatch_status)}</span>}
           </div>
 
           <div className="mono text-[10px] text-slate-500 font-bold bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-100">
-            {incident.assigned_resources?.[0]?.eta_minutes ? `${incident.assigned_resources[0].eta_minutes}m · ${incident.assigned_resources[0].distance_km}km` : '--m'}
+            {incident.assigned_resources?.[0]?.eta_minutes != null ? `${incident.assigned_resources[0].eta_minutes}m · ${incident.assigned_resources[0].distance_km}km` : '--m'}
           </div>
         </div>
 
@@ -166,11 +170,8 @@ const IncidentCard = ({ incident, onClick, onResolve, onAddNote, mViewTimeline, 
           <div className="context-menu-item" onClick={() => { onResolve?.(incident.incident_id); closeContextMenu(); }}>
             <CheckCircle2 size={12} className="text-aegis-low" /> Mark Resolved
           </div>
-          <div className="context-menu-item" onClick={() => { onAddNote?.(incident); closeContextMenu(); }}>
-            <Copy size={12} className="text-aegis-info" /> Add Note
-          </div>
-          <div className="context-menu-item" onClick={() => { mViewTimeline?.(incident); closeContextMenu(); }}>
-            <MoreHorizontal size={12} className="text-aegis-text-muted" /> View Timeline
+          <div className="context-menu-item" onClick={() => { onClick(incident); closeContextMenu(); }}>
+            <MoreHorizontal size={12} /> View incident details
           </div>
         </div>
       )}

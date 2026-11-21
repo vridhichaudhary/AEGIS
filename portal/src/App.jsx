@@ -3,6 +3,7 @@ import CitizenPanel from './panels/CitizenPanel';
 import AdminPanel from './panels/AdminPanel';
 import AARModal from './components/AARModal';
 import { connectWebSocket } from './utils/websocket';
+import { isPoint } from './components/MapView';
 import { getApiBase } from './utils/runtimeConfig';
 import { Activity, ShieldCheck, RadioTower } from 'lucide-react';
 
@@ -22,71 +23,101 @@ function App() {
   const [mapFocus, setMapFocus] = useState(null);
   const [wsStatus, setWsStatus] = useState('connecting');
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const [resData, hospData] = await Promise.all([
-          fetch(`${API_BASE}/api/v1/resources`).then(r => r.json()),
-          fetch(`${API_BASE}/api/v1/hospitals`).then(r => r.json()),
-        ]);
-        setResources(resData.resources || []);
-        setDepots(resData.depots || []);
-        setHospitals(hospData.hospitals || []);
-      } catch (e) {
-        console.warn('Backend waking up...', e.message);
-      }
-    };
-    load();
+  const [citizenReport, setCitizenReport] = useState(null);
+  const [actionError, setActionError] = useState('');
+  const [threatIntel, setThreatIntel] = useState(null);
 
-    const ws = connectWebSocket((event) => {
-      setWsStatus('connected');
+  const upsertIncident = incident => setIncidents(previous => [
+    incident, ...previous.filter(item => item.incident_id !== incident.incident_id),
+  ]);
+
+  useEffect(() => {
+    const socket = connectWebSocket((event) => {
       let data;
       try { data = JSON.parse(event.data); } catch { return; }
-
-      if (data.type === 'incident_update') {
-        const inc = data.payload;
-        setIncidents(prev => {
-          const others = prev.filter(i => i.incident_id !== inc.incident_id);
-          return [inc, ...others];
-        });
+      const payload = data.payload;
+      if (data.type === 'snapshot') {
+        setIncidents(payload.incidents || []);
+        setResources(payload.resources || []);
+        setDepots(payload.depots || []);
+        setHospitals(payload.hospitals || []);
+        setMciState(payload.mci || { active: false });
+        setThreatIntel(payload.threat_intel || null);
+      } else if (data.type === 'incident_update') {
+        upsertIncident(payload);
       } else if (data.type === 'agent_event') {
-        setAgentEvents(prev => [data.payload, ...prev].slice(0, 30));
+        setAgentEvents(previous => [payload, ...previous].slice(0, 30));
       } else if (data.type === 'resource_update') {
-        // Full fleet update
-        if (Array.isArray(data.payload)) {
-          setResources(data.payload);
-        }
+        setResources(payload.resources || []);
+        setDepots(payload.depots || []);
+      } else if (data.type === 'hospital_update') {
+        setHospitals(payload);
+      } else if (data.type === 'threat_intelligence') {
+        setThreatIntel(payload);
       } else if (data.type === 'mci_activation') {
-        setMciState({ active: true, zone: data.payload.zone, details: data.payload.details });
+        setMciState({ ...payload, active: true });
       } else if (data.type === 'mci_resolved') {
         setMciState({ active: false });
-        if (data.payload.aar_report) setReportData(data.payload.aar_report);
+        if (payload.aar_report) setReportData(payload.aar_report);
       }
-    });
-
-
-    return () => ws.close();
+    }, setWsStatus);
+    return () => socket.close();
   }, []);
 
-  const resolveIncident = async (id) => {
+  const request = async (path, options) => {
+    const response = await fetch(`${API_BASE}/api/v1/${path}`, options);
+    const data = await response.json();
+    if (!response.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'The request could not be completed.');
+    return data;
+  };
+
+  const resolveIncident = async id => {
+    setActionError('');
     try {
-      await fetch(`${API_BASE}/api/v1/incidents/${id}/resolve`, { method: 'POST' });
-      setIncidents(prev => prev.map(i =>
-        i.incident_id === id ? { ...i, status: 'RESOLVED' } : i
-      ));
-    } catch (e) {
-      console.error('Resolve failed:', e);
+      await request(`incidents/${id}/resolve`, { method: 'POST' });
+      setIncidents(previous => previous.map(incident => incident.incident_id === id
+        ? { ...incident, status: 'RESOLVED', incident_status: 'RESOLVED', requires_callback: false } : incident));
+    } catch (error) {
+      setActionError(error.message);
     }
   };
 
-  const handleFocusIncident = (incident) => {
-    if (incident?.location?.latitude) {
-      setMapFocus({ lat: incident.location.latitude, lng: incident.location.longitude });
+  const updateLocation = async (id, evidence) => {
+    const updated = await request(`callback/${id}/response`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(evidence),
+    });
+    // WebSocket carries the complete persisted record. Keep a REST fallback during reconnects.
+    if (wsStatus !== 'connected') upsertIncident({ ...updated, status: updated.incident_status });
+    return updated;
+  };
+
+  const reviewIncident = async (id, category) => {
+    const updated = await request(`incidents/${id}/review`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ category }),
+    });
+    if (wsStatus !== 'connected') upsertIncident({ ...updated, status: updated.incident_status });
+  };
+
+  const openReport = async () => {
+    setActionError('');
+    try {
+      setReportData(await request('report/generate'));
+    } catch (error) {
+      setActionError(error.message);
     }
   };
 
-  const activeIncidentCount = incidents.filter(i => i.status !== 'RESOLVED').length;
-  const systemLabel = wsStatus === 'connected' ? 'Live' : wsStatus === 'reconnecting' ? 'Recovering' : 'Connecting';
+  const handleFocusIncident = incident => {
+    const { latitude, longitude } = incident?.location || { latitude: incident?.lat, longitude: incident?.lng };
+    if (isPoint(latitude, longitude)) setMapFocus({ lat: latitude, lng: longitude });
+  };
+
+  const activeIncidentCount = incidents.filter(i => i.status !== 'RESOLVED' && !i.is_duplicate).length;
+  const systemLabel = { connected: 'Connected', reconnecting: 'Reconnecting', offline: 'Offline' }[wsStatus] || 'Connecting';
+  const citizenIncident = incidents.find(incident => incident.incident_id === citizenReport?.incident_id) || citizenReport;
 
   return (
     <div className="app-root">
@@ -98,7 +129,7 @@ function App() {
             </div>
             <div>
               <div className="app-brand-title">AEGIS Response Grid</div>
-              <div className="app-brand-subtitle">AI-assisted emergency coordination for multilingual, high-volume public safety operations</div>
+              <div className="app-brand-subtitle">Delhi NCR emergency dispatch simulator</div>
             </div>
           </div>
 
@@ -157,8 +188,8 @@ function App() {
         <div className="panel-content">
           {activePanel === 'citizen' ? (
             <CitizenPanel
-              latestCitizenIncident={incidents.find(i => i.status !== 'RESOLVED')}
-              allDepots={depots}
+              latestCitizenIncident={citizenIncident}
+              onReport={setCitizenReport}
             />
           ) : (
             <AdminPanel
@@ -171,6 +202,13 @@ function App() {
               mciActive={mciState.active}
               onResolveIncident={resolveIncident}
               onFocusIncident={handleFocusIncident}
+              onUpdateLocation={updateLocation}
+              onReviewIncident={reviewIncident}
+              onOpenReport={openReport}
+              actionError={actionError}
+              networkLabel={systemLabel}
+              threatIntel={threatIntel}
+              mciDetails={mciState.details}
             />
           )}
         </div>

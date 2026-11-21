@@ -1,6 +1,5 @@
-import json
 from datetime import datetime, timedelta
-from typing import List
+from typing import List, Literal
 
 from agents.base_agent import BaseAgent
 from langchain_core.messages import HumanMessage
@@ -8,12 +7,12 @@ from langchain_core.output_parsers import JsonOutputParser
 from pydantic import BaseModel, Field
 
 class ResourceRequirement(BaseModel):
-    type: str = Field(description="Type of resource, e.g. ambulance, police, fire_truck")
-    quantity: int = Field(description="Number of resources needed")
+    type: Literal["ambulance", "ambulance_trauma", "ambulance_cardiac", "fire_truck", "fire_truck_rescue", "police", "rescue_team"] = Field(description="Type of resource, e.g. ambulance, police, fire_truck")
+    quantity: int = Field(ge=1, le=10, description="Number of resources needed")
     specialized: bool = Field(description="Whether the resource needs to be specialized (e.g. trauma ambulance)")
 
 class TriageResult(BaseModel):
-    priority_level: str = Field(description="Priority level: P1 (critical), P2, P3, P4, P5 (minor)")
+    priority_level: Literal["P1", "P2", "P3", "P4", "P5"] = Field(description="Priority level: P1 (critical), P2, P3, P4, P5 (minor)")
     priority_justification: str = Field(description="Reasoning for the assigned priority")
     required_resources: List[ResourceRequirement] = Field(description="List of resources required to handle the emergency")
     estimated_severity: str = Field(description="One of: critical, serious, moderate, minor")
@@ -45,8 +44,10 @@ class TriageAgent(BaseAgent):
             }
 
         if category == "fire" and (
-            "trapped" in " ".join(clues)
+            bool(clues & {"trapped", "phas", "faase", "fase", "फंसे"})
             or "upper_floor_entrapment" in clues
+            or subcategory == "cylinder_blast"
+            or "cylinder phat" in text
             or "blast" in text
             or "explosion" in text
         ):
@@ -62,7 +63,7 @@ class TriageAgent(BaseAgent):
             }
 
         if category == "medical" and any(
-            token in text for token in ["heart attack", "cardiac", "not breathing", "unconscious", "behosh"]
+            token in text for token in ["heart attack", "cardiac", "not breathing", "unconscious", "behosh", "saans nahi", "दिल का दौरा", "बेहोश"]
         ):
             return {
                 "priority_level": "P1",
@@ -180,12 +181,13 @@ class TriageAgent(BaseAgent):
         }
 
     async def process(self, state: dict) -> dict:
+        baseline = self.heuristic_triage(state)
         triage_data = None
         triage_method = "llm_standard"
         category = state["incident_type"]["category"]
         unknown_emergency = (category == "other" or category is None)
 
-        if self.llm_available and HumanMessage is not None:
+        if self.llm_available and HumanMessage is not None and not state.get("human_override"):
             format_instructions = self.parser.get_format_instructions()
             
             if unknown_emergency:
@@ -219,26 +221,14 @@ Confidence: {state['confidence_score']}
 {format_instructions}"""
             try:
                 response = await self.invoke_llm([HumanMessage(content=prompt)])
-                triage_data = self.parser.parse(response.content)
+                triage_data = TriageResult.model_validate(self.parser.parse(response.content)).model_dump()
             except Exception as exc:
                 state["errors"].append(f"Triage LLM fallback triggered: {exc}")
 
-        if triage_data is None:
-            if unknown_emergency:
-                triage_method = "safe_default"
-                triage_data = {
-                    "priority_level": "P2",
-                    "priority_justification": "Unknown emergency type. Defaulting to safe over-triage.",
-                    "required_resources": [
-                        {"type": "ambulance", "quantity": 1, "specialized": False},
-                        {"type": "police", "quantity": 1, "specialized": False}
-                    ],
-                    "estimated_severity": "serious",
-                    "golden_hour_at_risk": False
-                }
-            else:
-                triage_method = "heuristic"
-                triage_data = self.heuristic_triage(state)
+        if (triage_data is None or baseline["priority_level"] == "P5"
+                or (baseline["priority_level"] == "P1" and triage_data["priority_level"] != "P1")):
+            triage_method = "heuristic"
+            triage_data = baseline
 
         priority = triage_data.get("priority_level", "P4")
         priority_score = self.PRIORITY_SCORES.get(priority, 3.0)

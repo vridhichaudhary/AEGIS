@@ -1,80 +1,46 @@
 import asyncio
 import json
+from collections import Counter
 from pathlib import Path
+from time import perf_counter
 
 from agents.supervisor import SupervisorAgent
 
-try:
-    from langsmith import Client
-except ImportError:  # pragma: no cover - optional dependency
-    Client = None
 
+async def evaluate() -> bool:
+    """Check the labeled demo cases without external telemetry or shared fleet state."""
+    dataset = Path(__file__).with_name("datasets") / "ground_truth.json"
+    cases = json.loads(dataset.read_text(encoding="utf-8"))
+    supervisor = SupervisorAgent()
+    matched = Counter()
+    elapsed_ms = []
+    for case in cases:
+        start = perf_counter()
+        result = await supervisor.process_call(case["transcript"])
+        elapsed_ms.append((perf_counter() - start) * 1000)
+        actual = {
+            "category": result["incident_type"]["category"],
+            "priority": result["priority"],
+            "location": result["location"]["source"],
+            "dispatch": result["dispatch_status"],
+        }
+        failures = []
+        for name, expected in case["expected"].items():
+            if actual[name] == expected:
+                matched[name] += 1
+            else:
+                failures.append(f"{name}: expected {expected}, got {actual[name]}")
+        print(f"{case['name']} — {', '.join(failures) if failures else 'PASS'}")
+        await supervisor.dispatch.release_resources(result["incident_id"])
+        supervisor.dedup.forget(result["incident_id"])
 
-class AEGISEvaluator:
-    """Runs evaluations against a ground-truth dataset when one is available."""
-
-    def __init__(self):
-        self.supervisor = SupervisorAgent()
-        self.langsmith = Client() if Client is not None else None
-        self.dataset_path = Path("evaluation/datasets/ground_truth.json")
-        self.ground_truth = self.load_ground_truth()
-
-    def load_ground_truth(self):
-        if not self.dataset_path.exists():
-            return []
-        with self.dataset_path.open() as handle:
-            return json.load(handle)
-
-    async def evaluate_triage_accuracy(self):
-        if not self.ground_truth:
-            print("No evaluation dataset found at evaluation/datasets/ground_truth.json")
-            return None
-
-        correct = 0
-        for incident in self.ground_truth:
-            result = await self.supervisor.process_call(incident["transcript"])
-            if result["priority"] == incident["true_priority"]:
-                correct += 1
-
-        accuracy = (correct / len(self.ground_truth)) * 100
-        print(f"Triage Accuracy: {accuracy:.2f}%")
-        return accuracy
-
-    async def evaluate_dispatch_latency(self):
-        if not self.ground_truth:
-            return None
-
-        latencies = []
-        for incident in self.ground_truth[:50]:
-            import time
-
-            start = time.time()
-            await self.supervisor.process_call(incident["transcript"])
-            latencies.append(time.time() - start)
-
-        latencies.sort()
-        p50 = latencies[len(latencies) // 2]
-        p99 = latencies[min(len(latencies) - 1, int(len(latencies) * 0.99))]
-        print(f"Dispatch Latency P50: {p50:.2f}s, P99: {p99:.2f}s")
-        return {"p50": p50, "p99": p99}
-
-    async def run_full_evaluation(self):
-        print("=== AEGIS Evaluation Suite ===\n")
-        triage_acc = await self.evaluate_triage_accuracy()
-        latency = await self.evaluate_dispatch_latency()
-
-        if self.langsmith is not None and triage_acc is not None and latency is not None:
-            self.langsmith.create_example(
-                inputs={"evaluation_type": "full_system"},
-                outputs={
-                    "triage_accuracy": triage_acc,
-                    "latency_p50": latency["p50"],
-                    "latency_p99": latency["p99"],
-                },
-                dataset_name="aegis-evaluation-results",
-            )
+    print(f"Results ({len(cases)} labeled simulation cases)")
+    for name in ("category", "priority", "location", "dispatch"):
+        print(f"  {name:<10} {matched[name]}/{len(cases)}")
+    elapsed_ms.sort()
+    print(f"  latency    median {elapsed_ms[len(elapsed_ms) // 2]:.1f} ms, max {elapsed_ms[-1]:.1f} ms")
+    return all(matched[field] == len(cases) for field in ("category", "priority", "location", "dispatch"))
 
 
 if __name__ == "__main__":
-    evaluator = AEGISEvaluator()
-    asyncio.run(evaluator.run_full_evaluation())
+    raise SystemExit(0 if asyncio.run(evaluate()) else 1)

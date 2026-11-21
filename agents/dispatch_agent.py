@@ -1,48 +1,23 @@
 from __future__ import annotations
 
-import json
-import random
-import aiohttp
 import asyncio
-import math
+from collections import Counter
 from datetime import datetime
-from typing import Dict, List, Literal, Optional, Tuple
+from typing import List, Optional, Tuple
 
-from agents.base_agent import BaseAgent
-from langchain_core.messages import HumanMessage
-from langchain_core.output_parsers import JsonOutputParser
-from pydantic import BaseModel, Field
+import aiohttp
+
 from config.settings import settings
-from state.hospitals import HOSPITALS, haversine_distance
+from state.hospitals import HOSPITALS, assign_unit, find_nearest_available, haversine_distance, release_units
 
-from state.hospitals import (
-    HOSPITALS, haversine_distance, find_nearest_available,
-    assign_unit, release_units, get_fleet_status, compute_eta
-)
 
-class JointDispatchMemo(BaseModel):
-    police_instructions: str = Field(description="Instructions for Police (100) or 'None'")
-    fire_instructions: str = Field(description="Instructions for Fire (101) or 'None'")
-    medical_instructions: str = Field(description="Instructions for Medical (108) or 'None'")
-    unified_incident_commander: str = Field(description="Agency taking the lead: POLICE, FIRE, or MEDICAL")
-
-class DispatchAgent(BaseAgent):
-    """Dispatches nearest available resources using Haversine distance + real ETA."""
-
-    _assigned_incidents: Dict[str, dict] = {}
-    preemption_events: List[dict] = []
-
-    def __init__(self):
-        super().__init__(temperature=0)
-        self.parser = JsonOutputParser(pydantic_object=JointDispatchMemo)
-
-    def haversine_km(self, lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-        return haversine_distance(lat1, lon1, lat2, lon2)
+class DispatchAgent:
+    """Assign available simulated units and report the provenance of each estimate."""
 
     async def get_osrm_eta(self, origin_lat, origin_lng, dest_lat, dest_lng):
-        """Try OSRM; fall back to Haversine."""
-        url = (f"http://router.project-osrm.org/route/v1/driving/"
-               f"{origin_lng},{origin_lat};{dest_lng},{dest_lat}?overview=false")
+        """Return a calibrated road estimate when the configured service responds."""
+        url = (f"{settings.OSRM_BASE_URL.rstrip('/')}/route/v1/driving/"
+               f"{origin_lng},{origin_lat};{dest_lng},{dest_lat}?overview=full&geometries=geojson")
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=4.0)) as s:
                 async with s.get(url) as resp:
@@ -50,21 +25,19 @@ class DispatchAgent(BaseAgent):
                         data = await resp.json()
                         if data.get("routes"):
                             r = data["routes"][0]
+                            coordinates = r["geometry"]["coordinates"]
+                            if len(coordinates) < 2:
+                                return None
                             return {
-                                "duration_minutes": round(r["duration"] / 60, 1),
+                                "eta_minutes": round(r["duration"] / 60, 1),
                                 "distance_km": round(r["distance"] / 1000, 1),
-                                "route_geometry": [],
+                                "route_geometry": coordinates,
+                                "route_source": "osrm",
                                 "route_name": "OSRM Road Network",
                             }
         except Exception:
             pass
-        dist = haversine_distance(origin_lat, origin_lng, dest_lat, dest_lng)
-        return {
-            "duration_minutes": round((dist / 35) * 60, 1),
-            "distance_km": round(dist, 2),
-            "route_geometry": [[origin_lng, origin_lat], [dest_lng, dest_lat]],
-            "route_name": "Haversine Estimate",
-        }
+        return None
 
     async def release_resources(self, incident_id: str) -> List[str]:
         return release_units(incident_id)
@@ -73,7 +46,7 @@ class DispatchAgent(BaseAgent):
         assigned = []
         dest_lat = location.get("latitude")
         dest_lng = location.get("longitude")
-        if not dest_lat or not dest_lng:
+        if dest_lat is None or dest_lng is None:
             return assigned
 
         for req in requirements:
@@ -83,7 +56,6 @@ class DispatchAgent(BaseAgent):
             to_assign = candidates[:min(quantity, len(candidates))]
             for unit in to_assign:
                 assign_unit(unit["resource_id"], incident_id, priority)
-                self._assigned_incidents[unit["resource_id"]] = {"incident_id": incident_id, "priority": priority, "status": "dispatched"}
                 assigned.append({
                     "resource_id": unit["resource_id"],
                     "resource_type": r_type,
@@ -93,80 +65,78 @@ class DispatchAgent(BaseAgent):
                     "depot_lat": unit["depot_lat"],
                     "depot_lng": unit["depot_lng"],
                     "route_geometry": [[unit["depot_lng"], unit["depot_lat"]], [dest_lng, dest_lat]],
-                    "route_name": f"From {unit['depot_name']}",
-                    "gps_accurate": True,
+                    "route_name": "Straight-line estimate",
+                    "route_source": "estimate",
                     "status": "dispatched",
                 })
+        if assigned and not settings.USE_MOCK_ROUTING:
+            try:
+                routes = await asyncio.gather(*(
+                    self.get_osrm_eta(unit["depot_lat"], unit["depot_lng"], dest_lat, dest_lng)
+                    for unit in assigned
+                ))
+            except asyncio.CancelledError:
+                release_units(incident_id)
+                raise
+            for unit, route in zip(assigned, routes):
+                if route:
+                    unit.update(route)
         return assigned
-
 
     async def process(self, state: dict) -> dict:
         requirements = state["resource_requirements"]
         incident_location = state["location"]
         incident_id = state["incident_id"]
         priority = state["priority"]
-        has_location = bool(incident_location and incident_location.get("raw_text"))
-        has_gps = bool(incident_location and incident_location.get("latitude"))
-
+        lat = (incident_location or {}).get("latitude")
+        lng = (incident_location or {}).get("longitude")
+        hold = None
         if state.get("is_duplicate"):
-            return {**state, "assigned_resources": [], "dispatch_status": "merged_duplicate"}
+            hold = "merged_duplicate"
+        elif priority == "P5":
+            hold = "not_required"
+        elif state.get("requires_callback") or lat is None or lng is None:
+            hold = "awaiting_location"
+        elif not (27.9 <= lat <= 29.35 and 76.5 <= lng <= 78.1):
+            hold = "outside_service_area"
+        elif not requirements or ("review_required" in state.get("validation_flags", []) and not state.get("human_override")):
+            hold = "review_required"
 
-        if "review_required" in state.get("validation_flags", []):
-            return {**state, "assigned_resources": [], "dispatch_status": "review_required"}
-
-        if priority == "P5":
-            return {**state, "assigned_resources": [], "dispatch_status": "not_required"}
-
-        joint_dispatch_memo = None
-        agency_timings = None
-        if self.llm_available and HumanMessage is not None:
-            # Memo logic remains same...
-            pass
-
-        if state.get("requires_callback"):
+        if hold:
+            state["agent_trail"].append({
+                "agent": "dispatch", "timestamp": datetime.now(),
+                "decision": "Held", "reasoning": hold.replace("_", " "),
+            })
             return {
-                **state,
-                "assigned_resources": [],
-                "dispatch_status": "pending_callback",
-                "incident_status": "PENDING_INFO"
+                **state, "assigned_resources": [], "dispatch_status": hold,
+                "incident_status": "PENDING_INFO" if hold == "awaiting_location" else "PENDING",
             }
-
-        if not has_location:
-            return {
-                **state,
-                "assigned_resources": [],
-                "dispatch_status": "awaiting_location",
-                "incident_status": "PENDING"
-            }
-
-        dest_hospital = None
-        hospital_warning = None
-        
-        # Determine if ambulance is requested
-        needs_ambulance = any(req["type"].startswith("ambulance") for req in requirements)
-        if needs_ambulance and has_gps:
-            # map category to specialty
-            cat = state.get("incident_type", {}).get("category", "")
-            specialty_map = {"accident": "trauma", "medical": "cardiac", "fire": "burn"}
-            required_specialty = specialty_map.get(cat, "trauma")
-            
-            dest_hospital, hospital_warning = self.select_destination_hospital(
-                incident_location["latitude"], 
-                incident_location["longitude"], 
-                required_specialty
-            )
 
         assigned_resources = await self.allocate_resources(incident_id, priority, requirements, incident_location)
-
-        status = "assigned" if assigned_resources else "resource_unavailable"
+        assigned_count = Counter(unit["resource_type"] for unit in assigned_resources)
+        demand = Counter()
+        for requirement in requirements:
+            demand[requirement["type"]] += requirement["quantity"]
+        shortfall = [{"type": kind, "quantity": count} for kind, count in (demand - assigned_count).items()]
+        status = ("partially_assigned" if shortfall else "assigned") if assigned_resources else "resource_unavailable"
         inc_status = "DISPATCHED" if assigned_resources else "PENDING"
+
+        dest_hospital = hospital_warning = None
+        if any(unit["resource_type"].startswith("ambulance") for unit in assigned_resources):
+            incident = state.get("incident_type") or {}
+            specialty = {"accident": "trauma", "fire": "burn"}.get(incident.get("category"), "emergency")
+            if incident.get("subcategory") == "cardiac_emergency":
+                specialty = "cardiac"
+            if incident.get("subcategory") == "obstetric_emergency":
+                specialty = "obstetrics"
+            dest_hospital, hospital_warning = self.select_destination_hospital(
+                lat, lng, specialty,
+            )
 
         reasoning_parts = []
         for res in assigned_resources:
-            suffix = f"via {res['route_name']}" if res.get("gps_accurate") else "Estimated (no GPS)"
+            suffix = res["route_name"]
             part = f"{res['resource_type']} {res['resource_id']} ETA {res['eta_minutes']}m ({res['distance_km']}km {suffix})"
-            if res.get("preempted"):
-                part += " [RECALLED]"
             reasoning_parts.append(part)
         
         reasoning = ", ".join(reasoning_parts) if assigned_resources else "No resources available."
@@ -184,57 +154,25 @@ class DispatchAgent(BaseAgent):
             "dispatch_status": status,
             "incident_status": inc_status,
             "dispatch_timestamp": datetime.now() if assigned_resources else None,
-            "joint_dispatch_memo": joint_dispatch_memo,
-            "agency_timings": agency_timings,
+            "resource_shortfall": shortfall,
             "destination_hospital": dest_hospital,
             "hospital_warning": hospital_warning,
         }
 
     def select_destination_hospital(self, lat: float, lng: float, required_specialty: str) -> Tuple[Optional[dict], Optional[str]]:
-        valid_hospitals = []
-        for h in HOSPITALS:
-            if required_specialty in h["specialties"]:
-                valid_hospitals.append(h)
-                
-        if not valid_hospitals:
-            valid_hospitals = HOSPITALS # fallback to all
-            
-        # calculate distances and score
-        scored_hospitals = []
-        for h in valid_hospitals:
-            dist = haversine_distance(lat, lng, h["lat"], h["lng"])
-            avail = h["available"]
-            # score: distance / (available beds + 0.1 to avoid div by zero)
-            # lower score is better (closer and more beds)
-            score = dist / max(avail, 0.1)
-            scored_hospitals.append({"hospital": h, "distance_km": dist, "score": score, "available": avail})
-            
-        # sort by score
-        scored_hospitals.sort(key=lambda x: x["score"])
-        
-        # filter out full hospitals
-        available_hospitals = [sh for sh in scored_hospitals if sh["available"] > 0]
-        
-        warning = None
-        if not available_hospitals:
-            # all full, just go to the closest
-            closest = scored_hospitals[0]
-            warning = f"CRITICAL: All hospitals full. Routing to closest ({closest['hospital']['name']})."
-            selected = closest
-        else:
-            selected = available_hospitals[0]
-            # Check if closest overall was full
-            closest_overall = scored_hospitals[0]
-            if closest_overall["available"] == 0 and closest_overall["hospital"]["id"] != selected["hospital"]["id"]:
-                warning = f"{closest_overall['hospital']['name']} at capacity — routing to {selected['hospital']['name']} ({abs(selected['distance_km'] - closest_overall['distance_km']):.1f}km further but {selected['available']} beds available)"
+        matching = [hospital for hospital in HOSPITALS if required_specialty in hospital["specialties"]]
+        if required_specialty == "emergency":
+            matching = HOSPITALS
+        candidates = [
+            (haversine_distance(lat, lng, hospital["lat"], hospital["lng"]), hospital)
+            for hospital in matching if hospital["available"] > 0
+        ]
+        if not candidates:
+            return None, f"No simulated hospital with available capacity for {required_specialty}."
 
-        dest_data = {
-            "name": selected["hospital"]["name"],
-            "lat": selected["hospital"]["lat"],
-            "lng": selected["hospital"]["lng"],
-            "distance_km": selected["distance_km"],
-            "available_beds": selected["available"],
-            "eta_to_hospital": round((selected["distance_km"] / 40.0) * 60) # 40 km/h avg speed
-        }
-        
-        return dest_data, warning
+        distance, hospital = min(candidates, key=lambda candidate: candidate[0])
+        return {
+            "name": hospital["name"], "lat": hospital["lat"], "lng": hospital["lng"],
+            "distance_km": round(distance, 2), "available_beds": hospital["available"],
+            "eta_to_hospital": round(distance / 40 * 60, 1), "eta_source": "estimate",
+        }, None

@@ -1,4 +1,8 @@
-import React from 'react';
+import React, { useCallback, useState } from 'react';
+import OperatorIncident from '../components/OperatorIncident';
+import WhatsAppSimulator from '../components/WhatsAppSimulator';
+import VoiceCommand from '../components/VoiceCommand';
+import ThreatIntelligencePanel from '../components/ThreatIntelligencePanel';
 import MapView from '../components/MapView';
 import PriorityQueue from '../components/PriorityQueue';
 import AgentFeed from '../components/AgentFeed';
@@ -27,9 +31,28 @@ const AdminPanel = ({
   mciActive = false,
   onResolveIncident,
   onFocusIncident,
+  onUpdateLocation,
+  onReviewIncident,
+  onOpenReport,
+  actionError,
+  networkLabel,
+  threatIntel,
+  mciDetails,
 }) => {
-  const activeIncidents = incidents.filter(i => i.status !== 'RESOLVED');
-  const duplicates = incidents.filter(i => i.is_duplicate);
+  const activeIncidents = incidents.filter(i => i.status !== 'RESOLVED' && !i.is_duplicate);
+  const [selected, setSelected] = useState(null);
+  const [picking, setPicking] = useState(false);
+  const [draftPin, setDraftPin] = useState(null);
+  const selectedIncident = incidents.find(incident => incident.incident_id === selected);
+  const clearPin = () => { setDraftPin(null); setPicking(false); };
+  const selectIncident = incident => {
+    if (selected !== incident.incident_id) clearPin();
+    setSelected(incident.incident_id);
+    onFocusIncident(incident);
+    requestAnimationFrame(() => document.getElementById("selected-incident")?.scrollIntoView({ block: "nearest" }));
+  };
+  const pickPin = useCallback(pin => { setDraftPin(pin); setPicking(false); document.getElementById("selected-incident")?.scrollIntoView({ block: "nearest" }); }, []);
+
   const totalMerged = incidents.reduce((acc, inc) => acc + (inc.merged_count || 1) - 1, 0);
   const availableResources = resources.filter(r => r.status === 'available').length;
 
@@ -43,7 +66,7 @@ const AdminPanel = ({
           <div>
             <div className="admin-brand-kicker">Unified emergency command</div>
             <div className="admin-brand-name">AEGIS <span>Command</span></div>
-            <div className="admin-brand-sub">Smart city dispatch orchestration for Delhi NCR control rooms</div>
+            <div className="admin-brand-sub">Delhi NCR dispatch exercises</div>
           </div>
           {mciActive && (
             <div className="mci-alert-badge animate-pulse">
@@ -58,24 +81,19 @@ const AdminPanel = ({
           <StatBadge icon={Users} label="Available" value={`${availableResources}/${resources.length}`} color="#2D8A72" />
           <StatBadge icon={Zap} label="System" value={
             <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-              <span className="status-dot status-dot-online" />Live
+              {networkLabel}
             </span>
           } />
         </div>
       </div>
 
-      <div className="admin-overview-strip">
-        <div className="admin-overview-card">
-          <div className="admin-overview-label">Operational posture</div>
-          <div className="admin-overview-value">{mciActive ? 'Mass-casualty protocol engaged' : 'Steady-state monitoring'}</div>
-          <div className="admin-overview-text">Incident intake, AI triage, dispatch assignment, and resource telemetry are synchronized in one live operator surface.</div>
-        </div>
-        <div className="admin-overview-card">
-          <div className="admin-overview-label">Queue health</div>
-          <div className="admin-overview-value">{activeIncidents.length === 0 ? 'No active threats' : `${activeIncidents.length} active incidents under watch`}</div>
-          <div className="admin-overview-text">Duplicates are merged before dispatch, while unresolved priorities stay visible for intervention and field coordination.</div>
-        </div>
+      <div className="flex flex-wrap items-center gap-3 mb-3">
+        <span className="text-sm text-slate-700">{activeIncidents.filter(incident => incident.requires_callback).length} location follow-ups</span>
+        <button className="rounded-lg border bg-white px-3 py-2 text-sm font-semibold" onClick={onOpenReport}>Exercise report</button>
+        <VoiceCommand />
       </div>
+      {actionError && <p className="mb-3 text-sm text-red-700" role="alert">{actionError}</p>}
+      {mciActive && mciDetails && <p className="mb-3 text-sm text-amber-900">{mciDetails.resource_gap_analysis}</p>}
 
       <div className="admin-grid">
         <div className="admin-card admin-map-card overflow-hidden">
@@ -87,15 +105,17 @@ const AdminPanel = ({
             <span className="admin-card-count">{activeIncidents.length} incidents</span>
           </div>
           <div className="admin-map-container h-full">
-            <MapView incidents={incidents} resources={resources} depots={depots} focusOn={mapFocus} />
+            <MapView incidents={incidents} depots={depots} focusOn={mapFocus}
+              onPickPin={picking ? pickPin : undefined} draftPin={draftPin} />
           </div>
         </div>
 
         <div className="admin-card admin-queue-card">
           <PriorityQueue
+            isMci={mciActive}
             incidents={incidents}
             onResolve={onResolveIncident}
-            onFocus={onFocusIncident}
+            onFocus={selectIncident}
           />
         </div>
 
@@ -132,6 +152,21 @@ const AdminPanel = ({
             </div>
           </div>
         </div>
+      </div>
+      {selectedIncident && (
+        <div className="my-3" id="selected-incident">
+          <OperatorIncident key={selected} incident={selectedIncident} draftPin={draftPin} picking={picking}
+            onPick={() => {
+              if (!picking) document.querySelector(".admin-map-card")?.scrollIntoView({ block: "nearest" });
+              setPicking(value => !value);
+            }} onClearPin={clearPin}
+            onUpdate={onUpdateLocation} onReview={onReviewIncident} onClose={() => { setSelected(null); clearPin(); }}
+            onResolve={onResolveIncident} />
+        </div>
+      )}
+      <div className="mt-4 grid gap-3 md:grid-cols-2">
+        <WhatsAppSimulator />
+        {threatIntel && <ThreatIntelligencePanel data={threatIntel} />}
       </div>
     </div>
   );

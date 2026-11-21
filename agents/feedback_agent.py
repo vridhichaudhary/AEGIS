@@ -76,7 +76,7 @@ class FeedbackAgent(BaseAgent):
         pattern = {
             "incident_id": incident_id,
             "incident_type": state.get("incident_type"),
-            "context": state.get("raw_transcript"),
+            "context": state.get("transcript"),
             "decision": state.get("priority"),
             "outcome": outcome,
             "timestamp": datetime.now().isoformat()
@@ -112,13 +112,9 @@ Identify:
         
         try:
             response = await self.invoke_llm([HumanMessage(content=prompt)])
-            insight = self.parser.parse(response.content)
+            insight = InsightOutput.model_validate(self.parser.parse(response.content)).model_dump()
             
             # Save insight
             db.save_insight(insight)
-            # Increment metric for decisions improved by feedback 
-            # (simulated increment for narrative effect when new rules are learned)
-            db.increment_metric("decisions_improved_by_feedback", len(insight.get("rule_suggestions", [])) * 2)
-            
         except Exception as exc:
             print(f"Feedback LLM analysis failed: {exc}")

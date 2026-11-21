@@ -1,8 +1,6 @@
-import json
 import re
-import random
 from datetime import datetime
-from typing import List, Tuple
+from typing import List, Literal, Tuple
 
 from agents.base_agent import BaseAgent
 from langchain_core.messages import HumanMessage
@@ -92,7 +90,6 @@ class IndianGeocoder:
         "india gate": (28.6129, 77.2295),
         "red fort": (28.6562, 77.2410),
         "qutub minar": (28.5245, 77.1855),
-        "cp": (28.6289, 77.2065),
 
         # Temples & Religious
         "hanuman mandir": (28.6350, 77.2200),
@@ -123,7 +120,6 @@ class IndianGeocoder:
         "nh 58": (28.7005, 77.1308),
 
         # Metro Stations
-        "metro station": (28.6139, 77.2090),
         "huda city centre": (28.4595, 77.0727),
         "iffco chowk": (28.4728, 77.0334),
         "rajiv chowk": (28.6289, 77.2065),
@@ -134,69 +130,23 @@ class IndianGeocoder:
     }
     
     @classmethod
-    def geocode(cls, location_text: str) -> Tuple[float, float]:
-        """
-        Convert location text to (latitude, longitude)
-        """
-        if not location_text or not location_text.strip():
-            # Default: Delhi center
-            return (28.6139, 77.2090)
-        
-        location_lower = location_text.lower().strip()
-        
-        # Clean common prefixes
-        for prefix in ["near ", "ke paas ", "at ", "in ", "mein ", "par "]:
-            location_lower = location_lower.replace(prefix, "")
-        
-        location_lower = location_lower.strip()
-        
-        # Try exact match
-        if location_lower in cls.LOCATIONS:
-            lat, lon = cls.LOCATIONS[location_lower]
-            # Add tiny random offset to avoid exact overlaps
-            lat += random.uniform(-0.0005, 0.0005)
-            lon += random.uniform(-0.0005, 0.0005)
-            return (lat, lon)
-        
-        # Try partial match
-        for key, coords in cls.LOCATIONS.items():
-            if key in location_lower or location_lower in key:
-                lat, lon = coords
-                lat += random.uniform(-0.0005, 0.0005)
-                lon += random.uniform(-0.0005, 0.0005)
-                return (lat, lon)
-        
-        # Extract sector number
-        sector_match = re.search(r'sector\s*(\d+)', location_lower)
-        if sector_match:
-            sector_num = int(sector_match.group(1))
-            
-            # Gurugram sectors (1-100)
-            if 1 <= sector_num <= 100:
-                base_lat = 28.4600
-                base_lon = 77.0300
-                
-                # Calculate position in grid
-                row = (sector_num - 1) // 10
-                col = (sector_num - 1) % 10
-                
-                lat = base_lat + (row * 0.015) + random.uniform(-0.001, 0.001)
-                lon = base_lon + (col * 0.012) + random.uniform(-0.001, 0.001)
-                
-                return (lat, lon)
-        
-        # Default: Delhi center with offset
-        lat = 28.6139 + random.uniform(-0.03, 0.03)
-        lon = 77.2090 + random.uniform(-0.03, 0.03)
-        return (lat, lon)
+    def geocode(cls, location_text: str) -> Tuple[float | None, float | None]:
+        key = re.sub(r"\s+", " ", location_text.strip().lower())
+        key = re.sub(r"^(?:near|at|in) ", "", key)
+        if key in {"delhi", "new delhi", "gurgaon", "gurugram", "noida", "greater noida"}:
+            return None, None
+        if key in cls.LOCATIONS:
+            return cls.LOCATIONS[key]
+        qualified_sector = re.fullmatch(r"(sector [0-9]+[a-z]?) (?:gurugram|gurgaon)", key)
+        return cls.LOCATIONS.get(qualified_sector.group(1), (None, None)) if qualified_sector else (None, None)
 
 
 class ParsingResult(BaseModel):
     location_text: str = Field(description="The extracted location string, e.g. 'Sector 14'")
     landmark: str = Field(description="Any specific landmark, e.g. 'Ambience Mall'")
-    incident_category: str = Field(description="One of: medical, fire, accident, natural_disaster, violence, other")
+    incident_category: Literal["medical", "fire", "accident", "natural_disaster", "violence", "other"] = Field(description="One of: medical, fire, accident, natural_disaster, violence, other")
     incident_subcategory: str = Field(description="More specific subcategory, e.g. 'cardiac_emergency', 'road_accident'")
-    victim_count: int = Field(description="Estimated number of victims")
+    victim_count: int = Field(ge=0, description="Estimated number of victims")
     severity_indicators: List[str] = Field(description="List of severe indicators like 'unconscious', 'trapped'")
     urgency_level: str = Field(description="One of: immediate, urgent, routine")
 
@@ -216,27 +166,28 @@ class ParsingAgent(BaseAgent):
         "cardiac arrest", "heart attack", "bleeding", "khoon",
         "trapped", "phas", "faase", "flood", "blast", "cylinder",
         "explosion", "burn", "jal gaye", "labor pain", "water broke",
-        "danga", "chaku", "gun",
+        "danga", "chaku", "gun", "faase", "fase", "दिल का दौरा", "बेहोश", "फंसे",
         # Hindi injury/victim terms
         "ghayal", "zakhmi", "injured", "ghaayal",
     }
     
     CATEGORY_PATTERNS = {
         "fire": [
-            r"\baag\b", r"\bfire\b", r"\bsmoke\b", r"\bburning\b",
+            r"\baag\b", r"आग", r"धुआँ", r"\bgas leak\b", r"\bcylinder phat\b", r"\bfire\b", r"\bsmoke\b", r"\bburning\b",
             r"\bcylinder\s*blast\b", r"\bexplosion\b", r"\bblast\b",
         ],
         "medical": [
-            r"\bheart\s*attack\b", r"\bcardiac\b", r"\bunconscious\b",
+            r"\bheart\s*attack\b", r"दिल का दौरा", r"बेहोश", r"साँ?स नहीं",
+            r"\b(?:labor|labour) pain\b", r"\bpaani toot gaya\b", r"\bcardiac\b", r"\bunconscious\b",
             r"\bbehosh\b", r"\bbleeding\b", r"\bkhoon\b",
             r"\bnot\s*breathing\b", r"\bsaans\s*nahi\b", r"\bambulance\b",
         ],
         "accident": [
-            r"\baccident\b", r"\bcrash\b", r"\bcollision\b",
+            r"\baccident\b", r"दुर्घटना", r"\bcollided\b", r"\boverturned\b", r"\bcrash\b", r"\bcollision\b",
             r"\btakra\b", r"\bvehicle\b", r"\bhighway\b",
         ],
         "natural_disaster": [
-            r"\bflood\b", r"\bpaani\s*ghus\s*gaya\b",
+            r"\bflood\b", r"बाढ़", r"\bpaani.{0,35}ghus gaya\b", r"\bpaani\s*ghus\s*gaya\b",
             r"\bearthquake\b", r"\blandslide\b",
         ],
         "violence": [
@@ -245,10 +196,15 @@ class ParsingAgent(BaseAgent):
         ],
     }
     
-    # Hindi/Hinglish postpositions that appear right AFTER a location name
-    HINDI_POSTPOSITIONS = [
-        r"\s+(?:mai|mein|me|pe|par|ke|ka|ki|ko|se|wala|wali|waale|tak|se|paar)\b",
-    ]
+    HINDI_LANDMARKS = {
+        "कनॉट प्लेस": "connaught place",
+        "इंडिया गेट": "india gate",
+        "नेहरू प्लेस": "nehru place",
+        "सेक्टर": "sector",
+        "नोएडा": "noida",
+        "गुरुग्राम": "gurugram",
+        "रोहिणी": "rohini",
+    }
 
     LOCATION_PATTERNS = [
         r"\b(sector\s+\d+[a-z]?(?:\s+(?:gurugram|gurgaon|noida|delhi))?)\b",
@@ -266,43 +222,51 @@ class ParsingAgent(BaseAgent):
         super().__init__(temperature=0)
         self.parser = JsonOutputParser(pydantic_object=ParsingResult)
 
-    def _strip_hindi_postpositions(self, text: str) -> str:
-        """Remove trailing Hindi postpositions so they don't bleed into location names."""
-        for pat in self.HINDI_POSTPOSITIONS:
-            text = re.sub(pat + r".*", "", text, flags=re.IGNORECASE).strip()
-        return text
-
     def extract_location(self, text: str) -> Tuple[str, str]:
-        """Extract location and landmark.
-
-        Strategy:
-        1. Scan for any known geocoder key (longest match first) directly in text.
-        2. Fall back to regex patterns on a Hindi-postposition-stripped version.
-        """
+        """Match whole landmarks and preserve city qualifiers on sector addresses."""
         lowered = text.lower().strip()
+        for hindi, alias in self.HINDI_LANDMARKS.items():
+            lowered = lowered.replace(hindi, alias)
 
-        # --- Step 1: Direct geocoder dictionary lookup (most reliable) ---
-        for loc_key in sorted(IndianGeocoder.LOCATIONS.keys(), key=len, reverse=True):
-            if loc_key in lowered:
-                is_landmark = any(t in loc_key for t in self.LANDMARK_TOKENS)
-                return loc_key.title(), loc_key.title() if is_landmark else ""
-
-        # --- Step 2: Strip Hindi postpositions, then try regex ---
-        cleaned = self._strip_hindi_postpositions(lowered)
-        # Also strip common Hinglish location prefixes
-        for prefix in ["near ", "ke paas ", "at ", "in ", "mein ", "mai ", "par ", "pe "]:
-            if cleaned.startswith(prefix):
-                cleaned = cleaned[len(prefix):]
-
+        sector = re.search(
+            r"\bsector\s*([0-9]+[a-z]?)(?:[ ,]+(greater noida|gurugram|gurgaon|noida|delhi|rohini|dwarka))?\b",
+            lowered,
+        )
+        matches = [
+            key for key in IndianGeocoder.LOCATIONS
+            if re.search(rf"(?<!\w){re.escape(key)}(?!\w)", lowered)
+        ]
+        specifics = [key for key in matches if key not in {
+            "delhi", "new delhi", "gurugram", "gurgaon", "noida", "greater noida", "rohini", "dwarka",
+        } and not key.startswith("sector ")]
+        if specifics:
+            longest = [key for key in specifics if not any(key != other and key in other for other in specifics)]
+            distinct = {IndianGeocoder.LOCATIONS[key] for key in longest}
+            if len(distinct) > 1:
+                return " / ".join(key.title() for key in longest), ""
+            key = max(longest, key=len)
+            return key.title(), key.title() if set(key.split()) & self.LANDMARK_TOKENS else ""
+        if sector:
+            number, city = sector.groups()
+            city = city or next((key for key in (
+                "greater noida", "noida", "gurugram", "gurgaon", "rohini", "dwarka", "delhi",
+            ) if key in matches), None)
+            key = f"sector {number}"
+            if city:
+                qualified = f"{key} {city}"
+                if city in {"gurugram", "gurgaon"} and key in IndianGeocoder.LOCATIONS:
+                    return qualified.title(), ""
+                return qualified.title(), ""
+            # Sector 18 has entries in both Gurugram and Noida.
+            return ("Sector 18 (city needed)" if number == "18" else key.title()), ""
+        if matches:
+            return max(matches, key=len).title(), ""
         for pattern in self.LOCATION_PATTERNS:
-            match = re.search(pattern, cleaned, flags=re.IGNORECASE)
+            match = re.search(pattern, lowered)
             if match:
-                location = re.sub(r"\s+", " ", match.group(1)).strip()
-                is_landmark = any(t in location.lower() for t in self.LANDMARK_TOKENS)
-                return location.title(), location.title() if is_landmark else ""
-
+                return match.group(1).strip().title(), ""
         return "", ""
-    
+
     def classify_incident(self, text: str) -> Tuple[str, str]:
         """Classify incident type"""
         lowered = text.lower()
@@ -314,13 +278,18 @@ class ParsingAgent(BaseAgent):
         for category, patterns in self.CATEGORY_PATTERNS.items():
             scores[category] = sum(1 for pattern in patterns if re.search(pattern, lowered))
         
-        best_category = max(scores, key=scores.get) if scores else "other"
+        # Injury symptoms can accompany collisions without changing the cause.
+        if re.search(r"\b(?:accident|collision|collided|crash|takra|overturned)\b|दुर्घटना", lowered) and not scores["natural_disaster"]:
+            return "accident", "road_accident"
+        best_category = max(scores, key=scores.get)
         if scores.get(best_category, 0) == 0:
             return "other", ""
         
         # Determine subcategory
         subcategory = ""
-        if "heart attack" in lowered or "cardiac" in lowered:
+        if best_category == "medical" and re.search(r"\b(?:labou?r pain|paani toot gaya)\b", lowered):
+            subcategory = "obstetric_emergency"
+        elif best_category == "medical" and ("heart attack" in lowered or "cardiac" in lowered or "दिल का दौरा" in lowered):
             subcategory = "cardiac_emergency"
         elif "blast" in lowered or "cylinder" in lowered:
             subcategory = "cylinder_blast"
@@ -352,7 +321,7 @@ class ParsingAgent(BaseAgent):
         lowered = text.lower()
         indicators = []
         
-        for term in self.CRITICAL_TERMS:
+        for term in sorted(self.CRITICAL_TERMS):
             if term in lowered:
                 indicators.append(term)
         
@@ -379,7 +348,7 @@ class ParsingAgent(BaseAgent):
     def generate_follow_up(self, missing_fields: List[str]) -> str:
         """Generate a contextual follow-up question when critical info is missing."""
         if "location" in missing_fields:
-            return "What is the nearest landmark, major road, or sector number near you?"
+            return "Share a location pin or give the nearest landmark, including the city for sector addresses."
         return "Could you provide more details about the situation?"
 
     async def process(self, state: dict) -> dict:
@@ -387,8 +356,9 @@ class ParsingAgent(BaseAgent):
         text = state["normalized_text"]
         
         # Try LLM if available
-        parsed_data = None
-        if self.llm_available:
+        baseline = self.heuristic_parse(text)
+        parsed_data = baseline
+        if self.llm_available and not state.get("human_override"):
             try:
                 prompt = f"""Extract emergency information from: "{text}"
 
@@ -402,24 +372,35 @@ Return JSON with:
 - urgency_level (immediate/urgent/routine)
 """
                 response = await self.invoke_llm([HumanMessage(content=prompt)])
-                parsed_data = self.parser.parse(response.content)
+                proposal = ParsingResult.model_validate(self.parser.parse(response.content)).model_dump()
+                # Gazetteer selection uses caller evidence, never a model-supplied landmark.
+                if baseline["incident_category"] == "other":
+                    parsed_data = {**baseline, "incident_category": proposal["incident_category"],
+                                   "incident_subcategory": proposal["incident_subcategory"]}
             except Exception as exc:
                 state["errors"].append(f"LLM parsing failed: {exc}")
         
-        # Fallback to heuristics
-        if not parsed_data:
-            parsed_data = self.heuristic_parse(text)
-        
+        if state.get("operator_category"):
+            category = state["operator_category"]
+            parsed_data = {**parsed_data, "incident_category": category,
+                           "incident_subcategory": baseline["incident_subcategory"] if category == baseline["incident_category"] else ""}
+
         # Geocode location
         location_text = parsed_data.get("location_text", "")
         lat, lon = IndianGeocoder.geocode(location_text)
         
+        pin = state.get("gps_override")
+        if pin:
+            lat, lon = pin["latitude"], pin["longitude"]
+        source = pin.get("source", "shared_pin") if pin else "gazetteer" if lat is not None else "unresolved"
+
         location = {
-            "raw_text": location_text,
+            "raw_text": pin.get("raw_text") or ("Operator map pin" if source == "operator_pin" else "Shared location pin") if pin else location_text,
             "landmark": parsed_data.get("landmark", ""),
             "latitude": lat,
             "longitude": lon,
-            "confidence": 0.88 if location_text else 0.3,
+            "confidence": 0.7 if source == "gazetteer" else 1.0 if pin else 0.0,
+            "source": source,
         }
         
         incident_type = {
@@ -435,7 +416,7 @@ Return JSON with:
         missing_fields = []
         suggested_question = None
         
-        if not location_text:
+        if lat is None or lon is None:
             requires_callback = True
             missing_fields.append("location")
             suggested_question = self.generate_follow_up(missing_fields)

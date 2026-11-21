@@ -4,7 +4,7 @@ const defaultWebSocketUrl = () => {
   return getWebSocketBase();
 };
 
-export const connectWebSocket = (onMessage, url = defaultWebSocketUrl()) => {
+export const connectWebSocket = (onMessage, onStatus, url = defaultWebSocketUrl()) => {
   let ws = null;
   let retryCount = 0;
   let reconnectTimer = null;
@@ -36,11 +36,12 @@ export const connectWebSocket = (onMessage, url = defaultWebSocketUrl()) => {
   const scheduleReconnect = () => {
     if (manuallyClosed || retryCount >= maxRetries) {
       if (retryCount >= maxRetries) {
-        console.error('Max WebSocket reconnections reached.');
+        onStatus?.('offline');
       }
       return;
     }
 
+    onStatus?.("reconnecting");
     const delay = Math.min(1000 * 2 ** retryCount, 15000);
     reconnectTimer = setTimeout(() => {
       retryCount += 1;
@@ -54,12 +55,18 @@ export const connectWebSocket = (onMessage, url = defaultWebSocketUrl()) => {
     ws = new WebSocket(socketUrl);
 
     ws.onopen = () => {
+      if (manuallyClosed) {
+        ws.close(1000, "Client closed connection");
+        return;
+      }
       retryCount = 0;
       startHeartbeat();
+      onStatus?.("connected");
       console.log('Connected to WebSocket:', socketUrl);
     };
 
     ws.onmessage = (event) => {
+      if (manuallyClosed) return;
       try {
         const parsed = JSON.parse(event.data);
         if (parsed?.type === 'pong') {
@@ -75,7 +82,7 @@ export const connectWebSocket = (onMessage, url = defaultWebSocketUrl()) => {
     };
 
     ws.onerror = (error) => {
-      console.error('WebSocket connection failed:', socketUrl, error);
+      if (!manuallyClosed) console.error('WebSocket connection failed:', socketUrl, error);
     };
 
     ws.onclose = (event) => {
@@ -93,7 +100,7 @@ export const connectWebSocket = (onMessage, url = defaultWebSocketUrl()) => {
     close: () => {
       manuallyClosed = true;
       clearTimers();
-      if (ws) {
+      if (ws?.readyState === WebSocket.OPEN) {
         ws.close(1000, 'Client closed connection');
       }
     },
