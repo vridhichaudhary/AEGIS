@@ -1,6 +1,6 @@
 # AEGIS · Emergency Dispatch Simulator
 
-AEGIS is a Delhi NCR emergency-response exercise built with FastAPI, LangGraph, React, Leaflet, WebSockets, and SQLite. It turns simulated English, Hindi, and Hinglish reports into an operator queue with location evidence, triage decisions, and simulated fleet assignments.
+AEGIS is an India-wide emergency-response exercise built with FastAPI, LangGraph, React, Leaflet, WebSockets, and SQLite. It turns simulated English, Hindi, and Hinglish reports into an operator queue with location evidence, triage decisions, and simulated fleet assignments.
 
 Use exercise transcripts, locations, and caller identities. The deployment model is a single API process with a simulated fleet and hospital inventory.
 
@@ -80,3 +80,53 @@ The scenario evaluation checks expected category, priority, location provenance,
 **Portfolio description**
 
 > Built a multilingual emergency dispatch simulator with LangGraph and FastAPI, implementing operator-confirmed geolocation, duplicate detection, simulated fleet assignment, and a real-time Leaflet control room. Added a reproducible evaluation suite and exportable decision timelines.
+
+## India-wide maps and geocoding
+
+The main Leaflet/OpenStreetMap map opens on India. Selecting a confirmed report focuses
+its pin. Map/report coverage is independent of fleet coverage: simulated depots cover
+Delhi NCR (65 km radius per depot), Mumbai, Bengaluru, Kolkata and Guwahati (60 km per
+regional depot). These are exercise inventories, not live emergency services. A confirmed
+Pune incident, for example, remains recorded with `outside_service_area`; no remote
+Delhi unit is assigned. Within a service area, exhausted or unsuitable units produce
+`resource_unavailable` or a partial assignment with the remaining demand listed.
+
+Set `GEOAPIFY_API_KEY` only in the backend environment or an untracked root `.env`
+(see `.env.example`), then restart FastAPI. Never use a `VITE_` variable for this key.
+The backend uses [Geoapify forward geocoding](https://apidocs.geoapify.com/docs/geocoding/forward-geocoding/)
+at `/v1/geocode/search` with `filter=countrycode:in`, `limit=5`, and a five-second timeout.
+The extracted caller address retains city, state and PIN qualifiers. HTTP client request
+logging is suppressed to keep credential query strings out of logs. Exceptions and provider
+payloads are not returned to the portal. Do not enable HTTP wire/debug tracing for credentials.
+
+Every provider result requires operator confirmation. Street/building/amenity candidates
+appear with their full address labels in incident details. City/locality/postcode results
+are too broad to confirm directly: select a map pin instead. No match, timeout, quota
+failure and missing configuration preserve the report in location follow-up without a
+routable coordinate. Shared GPS and operator pins take precedence and bypass geocoding.
+Built-in Delhi NCR demo landmarks still work without a key.
+
+### National demo walkthrough
+
+1. Start both services as above with `AEGIS_DISABLE_LLM=1`. Open Control Room and observe
+   India-wide map coverage and the five simulated fleet regions.
+2. Submit `Fire at MG Road, Bengaluru, Karnataka 560001`. With a working key, open the
+   pending incident, inspect labeled candidates, select a precise result, and press
+   **Confirm incident location**. Select the incident card to focus the confirmed pin.
+   Units come from the Bengaluru exercise depot; straight-line routes and ETAs are estimates.
+3. Submit `Fire at MG Road, Pune, Maharashtra 411001` and confirm its precise result.
+   The report is mapped but shows **Outside the simulation fleet area**.
+4. Submit `Fire at MG Road`, then `Fire at Zzyzx Unknown Landmark`. Ambiguous or empty
+   results stay pending. Inspect candidates, or choose **Select pin on map**, click the
+   map, and explicitly confirm the location. City-only candidates require a map pin.
+5. Repeat without a key: national text addresses stay pending, while **Hinglish fire**
+   and the WhatsApp shared-location demo continue to work. Configure `USE_MOCK_ROUTING=false`
+   to try optional OSRM; failure falls back to labeled straight-line estimates.
+
+Automated tests mock Geoapify, including timeout and quota failures. Live provider quality,
+key restrictions/quota and OSRM availability depend on the configured external services.
+
+Live verification on 21 November 2026: the supplied Geoapify credential returned one
+Bengaluru candidate, two Pune candidates, and five candidates for unqualified MG Road.
+No credential is stored in the repository. Provider availability and result quality may
+change; quota/timeout behavior is verified with mocks rather than exhausting a live quota.

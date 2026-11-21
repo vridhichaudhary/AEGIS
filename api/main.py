@@ -405,6 +405,7 @@ class CommandAgentRequest(BaseModel):
 
 
 class CallbackResponseRequest(BaseModel):
+    candidate_index: Optional[int] = Field(default=None, ge=0, le=4)
     additional_info: str = Field(default="", max_length=2000)
     location: Optional[LocationPin] = None
 
@@ -721,13 +722,20 @@ async def process_callback_response(incident_id: str, request: CallbackResponseR
         raise HTTPException(status_code=404, detail="Incident not found in callback queue")
     if incident_id in INCIDENT_UPDATES_IN_PROGRESS:
         raise HTTPException(status_code=409, detail="Location update is already in progress.")
-    if not request.location and not request.additional_info.strip():
+    if request.candidate_index is None and not request.location and not request.additional_info.strip():
         raise HTTPException(status_code=422, detail="Provide a confirmed pin or additional location details.")
 
     previous = active_incidents[incident_id]
     # Prefer the new location statement when the original transcript was ambiguous.
     transcript = f"{request.additional_info.strip()}\n{entry['transcript']}".strip()
     pin = {**request.location.model_dump(), "source": "operator_pin"} if request.location else None
+    if request.candidate_index is not None and not request.location:
+        candidates = previous.get("location", {}).get("candidates", [])
+        if request.candidate_index >= len(candidates) or not candidates[request.candidate_index].get("selectable"):
+            raise HTTPException(status_code=422, detail="Select a precise candidate or confirm a map pin.")
+        candidate = candidates[request.candidate_index]
+        pin = {"latitude": candidate["latitude"], "longitude": candidate["longitude"],
+               "source": "operator_pin", "raw_text": candidate["label"]}
     INCIDENT_UPDATES_IN_PROGRESS.add(incident_id)
     try:
         result = await supervisor.process_call(

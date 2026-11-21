@@ -8,7 +8,7 @@ from typing import List, Optional, Tuple
 import aiohttp
 
 from config.settings import settings
-from state.hospitals import HOSPITALS, assign_unit, find_nearest_available, haversine_distance, release_units
+from state.hospitals import HOSPITALS, fleet_covers, assign_unit, find_nearest_available, haversine_distance, release_units
 
 
 class DispatchAgent:
@@ -97,7 +97,7 @@ class DispatchAgent:
             hold = "not_required"
         elif state.get("requires_callback") or lat is None or lng is None:
             hold = "awaiting_location"
-        elif not (27.9 <= lat <= 29.35 and 76.5 <= lng <= 78.1):
+        elif not fleet_covers(lat, lng):
             hold = "outside_service_area"
         elif not requirements or ("review_required" in state.get("validation_flags", []) and not state.get("human_override")):
             hold = "review_required"
@@ -165,7 +165,7 @@ class DispatchAgent:
             matching = HOSPITALS
         candidates = [
             (haversine_distance(lat, lng, hospital["lat"], hospital["lng"]), hospital)
-            for hospital in matching if hospital["available"] > 0
+            for hospital in matching if hospital["available"] > 0 and haversine_distance(lat, lng, hospital["lat"], hospital["lng"]) <= 65
         ]
         if not candidates:
             return None, f"No simulated hospital with available capacity for {required_specialty}."

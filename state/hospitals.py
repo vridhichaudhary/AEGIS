@@ -1,7 +1,7 @@
 """
-Delhi NCR Emergency Resource Dataset
-25 locations: hospitals, police stations, fire stations
-Real-world approximate coordinates across Delhi + Gurgaon + Noida
+Simulated regional fleet dataset.
+Approximate Delhi NCR landmarks and synthetic depots in four additional cities.
+Depot service radii restrict fleet reach independently of nationwide report coverage.
 """
 import math
 
@@ -268,6 +268,30 @@ RESOURCE_DEPOTS = [
     },
 ]
 
+# Service areas describe simulated fleet reach, independently of map/report coverage.
+for depot in RESOURCE_DEPOTS:
+    depot.update(simulated=True, service_radius_km=65)
+    depot["name"] = "Simulated · " + depot["name"]
+
+for city, lat, lng in [("Mumbai", 19.076, 72.8777), ("Bengaluru", 12.9716, 77.5946),
+                        ("Kolkata", 22.5726, 88.3639), ("Guwahati", 26.1445, 91.7362)]:
+    RESOURCE_DEPOTS.append({
+        "id": "sim_" + city.lower(), "name": "Simulated · " + city + " exercise depot",
+        "type": "rescue", "lat": lat, "lng": lng, "simulated": True, "service_radius_km": 60,
+        "resources": {"ambulances": 3, "fire_trucks": 2, "police_units": 1, "rescue_teams": 1},
+        "available": {"ambulances": 3, "fire_trucks": 2, "police_units": 1, "rescue_teams": 1},
+        "units": [{"resource_id": f"SIM-{city.upper()}-{i}", "resource_type": kind, "status": "available"}
+                  for i, kind in enumerate(SPEED)],
+    })
+
+
+def covers(depot, lat, lng):
+    return haversine_distance(depot["lat"], depot["lng"], lat, lng) <= depot["service_radius_km"]
+
+
+def fleet_covers(lat, lng):
+    return any(covers(depot, lat, lng) for depot in RESOURCE_DEPOTS)
+
 # ── In-memory availability tracking ──────────────────────────────────────────
 _unit_assignments: dict = {}   # resource_id -> {incident_id, priority, status}
 
@@ -277,7 +301,7 @@ def get_all_units() -> list:
     for depot in RESOURCE_DEPOTS:
         for unit in depot["units"]:
             units.append({**unit, "depot_id": depot["id"], "depot_name": depot["name"],
-                          "depot_lat": depot["lat"], "depot_lng": depot["lng"]})
+                          "depot_lat": depot["lat"], "depot_lng": depot["lng"], "service_radius_km": depot["service_radius_km"]})
     return units
 
 def find_nearest_available(resource_type: str, dest_lat: float, dest_lng: float) -> list:
@@ -293,6 +317,8 @@ def find_nearest_available(resource_type: str, dest_lat: float, dest_lng: float)
         if assignment and assignment.get("status") != "available":
             continue
         dist = haversine_distance(unit["depot_lat"], unit["depot_lng"], dest_lat, dest_lng)
+        if dist > unit["service_radius_km"]:
+            continue
         eta = compute_eta(dist, resource_type)
         candidates.append({**unit, "distance_km": round(dist, 2), "eta_minutes": round(eta, 1)})
     candidates.sort(key=lambda x: x["distance_km"])
@@ -348,5 +374,6 @@ def get_depot_status(fleet: list) -> list:
             "id": depot["id"], "name": depot["name"], "type": depot["type"],
             "lat": depot["lat"], "lng": depot["lng"],
             "resources": depot["resources"], "available": counts,
+            "simulated": True, "service_radius_km": depot["service_radius_km"],
         })
     return depots

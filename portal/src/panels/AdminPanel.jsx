@@ -66,7 +66,7 @@ const AdminPanel = ({
           <div>
             <div className="admin-brand-kicker">Unified emergency command</div>
             <div className="admin-brand-name">AEGIS <span>Command</span></div>
-            <div className="admin-brand-sub">Delhi NCR dispatch exercises</div>
+            <div className="admin-brand-sub">India-wide dispatch exercises</div>
           </div>
           {mciActive && (
             <div className="mci-alert-badge animate-pulse">

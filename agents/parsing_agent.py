@@ -1,3 +1,4 @@
+from routing.geocoding import search_address
 import re
 from datetime import datetime
 from typing import List, Literal, Tuple
@@ -225,6 +226,12 @@ class ParsingAgent(BaseAgent):
     def extract_location(self, text: str) -> Tuple[str, str]:
         """Match whole landmarks and preserve city qualifiers on sector addresses."""
         lowered = text.lower().strip()
+        # Preserve the complete caller address, including city/state/PIN, for national lookup.
+        address = re.search(r"\b(?:at|near|address[: ]+)\s+(.+?)(?:[!;\n]|$)", text, re.I)
+        if address and not any(key in address.group(1).lower() for key in IndianGeocoder.LOCATIONS):
+            return address.group(1).strip(), ""
+        if re.search(r"\b(?:mg|mahatma gandhi)\s+road\b", lowered):
+            return re.split(r"[!;\n]", text)[0].strip(), ""
         for hindi, alias in self.HINDI_LANDMARKS.items():
             lowered = lowered.replace(hindi, alias)
 
@@ -394,6 +401,9 @@ Return JSON with:
             lat, lon = pin["latitude"], pin["longitude"]
         source = pin.get("source", "shared_pin") if pin else "gazetteer" if lat is not None else "unresolved"
 
+        lookup = {"candidates": [], "status": "confirmed" if lat is not None else "pending"}
+        if lat is None and not pin:
+            lookup = await search_address(location_text)
         location = {
             "raw_text": pin.get("raw_text") or ("Operator map pin" if source == "operator_pin" else "Shared location pin") if pin else location_text,
             "landmark": parsed_data.get("landmark", ""),
@@ -401,6 +411,8 @@ Return JSON with:
             "longitude": lon,
             "confidence": 0.7 if source == "gazetteer" else 1.0 if pin else 0.0,
             "source": source,
+            "confirmed": lat is not None,
+            **lookup,
         }
         
         incident_type = {

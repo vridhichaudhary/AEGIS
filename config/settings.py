@@ -18,6 +18,7 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("GOOGLE_API_KEY", "GEMINI_API_KEY"),
     )
+    GEOAPIFY_API_KEY: Optional[str] = None
     GROQ_API_KEY: Optional[str] = None
     XAI_API_KEY: Optional[str] = None
 
