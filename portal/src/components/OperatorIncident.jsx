@@ -1,12 +1,19 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { locationSource } from './MapView';
 import { dispatchLabel } from '../utils/incidentStatus';
 
 const OperatorIncident = ({ incident, draftPin, picking, onPick, onClearPin, onUpdate, onReview, onClose, onResolve }) => {
+  const [candidateIndex, setCandidateIndex] = useState('');
   const [detail, setDetail] = useState('');
   const [category, setCategory] = useState('');
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
+  useEffect(() => {
+    setCandidateIndex('');
+    setDetail('');
+    setCategory('');
+    setError('');
+  }, [incident.incident_id]);
 
   const save = async event => {
     event.preventDefault();
@@ -15,6 +22,7 @@ const OperatorIncident = ({ incident, draftPin, picking, onPick, onClearPin, onU
     try {
       const result = await onUpdate(incident.incident_id, {
         additional_info: detail.trim(), location: draftPin,
+        candidate_index: !draftPin && candidateIndex !== '' ? Number(candidateIndex) : null,
       });
       setDetail('');
       onClearPin();
@@ -60,6 +68,13 @@ const OperatorIncident = ({ incident, draftPin, picking, onPick, onClearPin, onU
       {incident.requires_callback && incident.dispatch_status === 'awaiting_location' && (
         <form className="mt-4 space-y-2 border-t pt-3" onSubmit={save}>
           <p>{incident.suggested_callback_script}</p>
+          <p>Geocoding: {incident.location?.status || 'pending'}. Confirm a precise candidate or select a map pin before dispatch.</p>
+          {(incident.location?.candidates || []).map((candidate, index) => (
+            <label key={index} className="block rounded border p-2">
+              <input type="radio" name="candidate" disabled={!candidate.selectable} checked={candidateIndex === String(index)} onChange={() => setCandidateIndex(String(index))} />
+              {' '}{candidate.label} · {candidate.result_type}{!candidate.selectable && ' · too broad; select a map pin'}
+            </label>
+          ))}
           <label className="block font-medium">Callback details
             <input className="mt-1 block w-full rounded border px-2 py-2" value={detail} onChange={event => setDetail(event.target.value)} maxLength={2000} />
           </label>
@@ -67,8 +82,8 @@ const OperatorIncident = ({ incident, draftPin, picking, onPick, onClearPin, onU
             <button type="button" className="rounded border px-2 py-1" onClick={onPick} disabled={saving}>
               {picking ? 'Cancel map selection' : 'Select pin on map'}
             </button>
-            <button className="rounded bg-slate-800 px-3 py-1 text-white disabled:opacity-50" disabled={saving || (!detail.trim() && !draftPin)}>
-              {saving ? 'Saving…' : 'Update incident location'}
+            <button className="rounded bg-slate-800 px-3 py-1 text-white disabled:opacity-50" disabled={saving || (!detail.trim() && !draftPin && candidateIndex === '')}>
+              {saving ? 'Saving…' : 'Confirm incident location'}
             </button>
           </div>
           {picking && <p role="status">Click the incident map to place a pin.</p>}

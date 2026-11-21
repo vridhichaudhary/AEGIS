@@ -3,7 +3,8 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Layers, Maximize2 } from 'lucide-react';
 
-const CENTER = [28.6139, 77.2090];
+const CENTER = [22.5, 82.5];
+const INDIA_BOUNDS = [[6.5, 68], [37.5, 97.5]];
 const COLORS = { P1: '#b93436', P2: '#c36526', P3: '#b48724', P4: '#27836d', P5: '#3975b4' };
 const STREET = 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
 const SATELLITE = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
@@ -45,9 +46,15 @@ const MapView = ({ incidents = [], depots = [], focusOn, compact = false, onPick
     let instance;
     let observer;
     try {
-      instance = L.map(container.current).setView(CENTER, 11);
+      instance = L.map(container.current).fitBounds(INDIA_BOUNDS);
       map.current = instance;
-      observer = new ResizeObserver(() => instance.invalidateSize());
+      observer = new ResizeObserver(() => {
+        instance.invalidateSize();
+        if (container.current?.clientHeight > 0 && container.current?.clientWidth > 0) {
+          if (compact && bounds.current) instance.fitBounds(bounds.current, { padding: [28, 28], maxZoom: 14 });
+          else instance.fitBounds(INDIA_BOUNDS);
+        }
+      });
       observer.observe(container.current);
     } catch (error) {
       console.error('Map initialization failed', error);
@@ -98,6 +105,9 @@ const MapView = ({ incidents = [], depots = [], focusOn, compact = false, onPick
     if (showDepots) {
       depots.filter(depot => isPoint(depot.lat, depot.lng)).forEach(depot => {
         const available = Object.values(depot.available || {}).reduce((total, count) => total + count, 0);
+        L.circle([depot.lat, depot.lng], {
+          radius: (depot.service_radius_km || 0) * 1000, color: '#365971', weight: 1, fillOpacity: 0.05,
+        }).bindPopup(popup(depot.name, `Simulated service radius: ${depot.service_radius_km} km`)).addTo(stations);
         L.circleMarker([depot.lat, depot.lng], {
           radius: 5, weight: 2, color: '#fff', fillColor: '#365971', fillOpacity: 0.85,
         }).bindPopup(popup(depot.name, `${available} simulated units available`)).addTo(stations);
@@ -176,11 +186,12 @@ const MapView = ({ incidents = [], depots = [], focusOn, compact = false, onPick
         )}
         <button className="rounded border bg-white p-2" aria-label="Fit incident map" onClick={() => {
           if (bounds.current) map.current?.fitBounds(bounds.current, { padding: [28, 28], maxZoom: 14 });
-          else map.current?.setView(CENTER, 11);
+          else map.current?.fitBounds(INDIA_BOUNDS);
         }}><Maximize2 size={15} /></button>
         <button className="rounded border bg-white p-2" aria-label={layer === 'street' ? 'Show satellite map' : 'Show street map'} onClick={() => setLayer(layer === 'street' ? 'satellite' : 'street')}><Layers size={15} /></button>
       </div>
       <div className="absolute bottom-6 left-3 z-10 rounded-lg bg-white/95 p-2 text-[11px] text-slate-700 shadow">
+        <div>India-wide reports · limited simulated fleet coverage</div>
         <div>Solid · road route</div>
         <div>Dashed · straight-line estimate</div>
         {!compact && unmapped > 0 && <div>{unmapped} reports without a mapped location</div>}

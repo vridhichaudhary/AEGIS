@@ -7,3 +7,6 @@ aegis.db
 .venv/
 PRESENTATION_NOTES.md
 aegis-demo.db
+
+.env.*
+!.env.example

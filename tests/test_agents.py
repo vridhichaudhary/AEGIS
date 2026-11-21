@@ -248,11 +248,40 @@ class ApiTests(unittest.TestCase):
     def test_out_of_area_pin_does_not_assign_a_delhi_unit(self):
         report = self.client.post("/api/v1/emergency/report", json={
             "transcript": "Heart attack. Send an ambulance.",
-            "location": {"latitude": 19.07, "longitude": 72.87},
+            "location": {"latitude": 18.52, "longitude": 73.85},
         }).json()
         self.assertEqual(report["location"]["source"], "shared_pin")
         self.assertEqual(report["dispatch_status"], "outside_service_area")
         self.assertEqual(report["assigned_resources"], [])
+
+    def test_geoapify_candidate_confirmation_and_city_rejection(self):
+        candidates = [
+            {"label": "MG Road, Bengaluru, Karnataka 560001", "latitude": 12.975,
+             "longitude": 77.606, "result_type": "street", "selectable": True},
+            {"label": "Bengaluru", "latitude": 12.97, "longitude": 77.59,
+             "result_type": "city", "selectable": False},
+        ]
+        with patch("agents.parsing_agent.search_address", new_callable=AsyncMock,
+                   return_value={"status": "confirmation_required", "candidates": candidates}):
+            report = self.client.post("/api/v1/emergency/report", json={
+                "transcript": "Fire at MG Road, Bengaluru, Karnataka 560001; please help people trapped!",
+            }).json()
+        incident_id = report["incident_id"]
+        self.assertEqual(report["dispatch_status"], "awaiting_location")
+        self.assertEqual(report["assigned_resources"], [])
+        endpoint = f"/api/v1/callback/{incident_id}/response"
+        self.assertEqual(self.client.post(endpoint, json={"candidate_index": 1}).status_code, 422)
+        self.assertEqual(self.client.post(endpoint, json={"candidate_index": 4}).status_code, 422)
+        confirmed_response = self.client.post(endpoint, json={"candidate_index": 0})
+        self.assertEqual(confirmed_response.status_code, 200)
+        confirmed = confirmed_response.json()
+        self.assertEqual(confirmed["incident_id"], incident_id)
+        self.assertEqual(confirmed["location"]["raw_text"], candidates[0]["label"])
+        self.assertEqual(confirmed["location"]["source"], "operator_pin")
+        self.assertTrue(confirmed["assigned_resources"])
+        self.assertTrue(all("Bengaluru" in unit["depot_name"] for unit in confirmed["assigned_resources"]))
+        self.assertEqual(confirmed["assigned_resources"][0]["route_source"], "estimate")
+        self.assertIsNone(confirmed["destination_hospital"])
 
     def test_image_without_caption_does_not_create_an_incident(self):
         response = self.client.post("/api/v1/webhook/whatsapp", json={"type": "image", "image": {"link": "demo.jpg"}})

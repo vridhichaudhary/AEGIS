@@ -129,7 +129,7 @@ function App() {
             </div>
             <div>
               <div className="app-brand-title">AEGIS Response Grid</div>
-              <div className="app-brand-subtitle">Delhi NCR emergency dispatch simulator</div>
+              <div className="app-brand-subtitle">India-wide reports · simulated regional fleet</div>
             </div>
           </div>
 
